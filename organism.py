@@ -3,42 +3,52 @@ import settings
 
 class organism():
     def __init__(self,name = None):
-        self.x = uniform(settings.x_min,settings.x_max)
-        self.y = uniform(settings.y_min,settings.y_max)
+        self.x = int(uniform(settings.x_min,settings.x_max))
+        self.y = int(uniform(settings.y_min,settings.y_max))
         self.name = name
         
-        self.brain = initialize_brain()
+        # self.brain = self.initialize_brain()
+        self.brain = None
         self.knowledge = None
         self.next_actions = None
         
-    def update_state():
+    def move(self,dx,dy):
         '''
         update the state of the organism based on external stimuli
         '''
-        self.act()
-        self.knowledge = perceive()
-        self.next_actions = action()
+        # self.act()
+        # self.knowledge = perceive()
+        # self.next_actions = action()
+
+        # TODO: pass a delta into this 
+        self.x = self.x+dx
+        self.y = self.y-dy
         
         
-    def perceive(perception_type):
+    def perceive(self):
         '''
         defines the ability for an organism to percieve aspects of the state of its environment
         TODO: At this stage the type of information we want is limited to whether +/- x or y is advantageous (maybe this should happen in the brain?)
+        x pos, y pos, open positions around
+
         '''
-    
-        return perceived_information
+        current_knowledge = {'x_pos':self.x,
+                            'y_pos':self.y}
+        
+        return current_knowledge
+        
 
-    def action():
+    # def action():
 
-       '''
-       defines the ability for an organism to make outwardly perceptible actions
-       '''
-        # pseudocode below
-        possible_actions = ['x move','y move']
-        action_steps_dict = {}
-        for action in possible_actions:
-            action_steps_dict[action] = perceive
-        return action_steps_dict
+    #    '''
+    #    defines the ability for an organism to make outwardly perceptible actions
+    #    '''
+    #     # pseudocode below
+    #     possible_actions = ['x move','y move']
+    #     action_steps_dict = {}
+    #     for action in possible_actions:
+    #         action_steps_dict[action] = perceive()
+    #     return action_steps_dict
 
     def act():
         '''
@@ -88,7 +98,7 @@ class world():
         self.n_organisms = n_organisms
         self.organism_states = self.build_initial_config()
 
-    def build_initial_config():
+    def build_initial_config(self):
         '''
         Build the inital configuration of the world, including all organism states. Store all of the organisms somehow. 
         '''
@@ -97,7 +107,7 @@ class world():
             list_of_organisms.append(organism())
         return list_of_organisms
 
-    def update_organisms():
+    def update_organisms(self):
         '''
         updates the state of all organisms in the world based on organism state and world state. 
         calls organism.update_state() for all organisms
