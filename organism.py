@@ -20,9 +20,15 @@ class organism():
         # self.knowledge = perceive()
         # self.next_actions = action()
 
-        # TODO: pass a delta into this 
-        self.x = self.x+dx
-        self.y = self.y-dy
+        
+        xlims = [0,100]
+        ylims = [0,100]
+        
+        if self.x in range(xlims[0]+1,xlims[1]-1):
+
+            self.x = self.x+dx
+        if self.y in range(ylims[0]+1,ylims[1]-1):
+            self.y = self.y+dy
         
         
     def perceive(self):
