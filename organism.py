@@ -34,12 +34,13 @@ class organism():
     def perceive(self):
         '''
         defines the ability for an organism to percieve aspects of the state of its environment
-        TODO: At this stage the type of information we want is limited to whether +/- x or y is advantageous (maybe this should happen in the brain?)
-        x pos, y pos, open positions around
+        TODO:
+        - just need a featurization of the environment relative to the organism
+            - has_neighbors, x_pos, y_pos, proximity_to_nearest_neighbor, 
 
         '''
         current_knowledge = {'x_pos':self.x,
-                            'y_pos':self.y}
+                            'y_pos':self.y,}
         
         return current_knowledge
         
@@ -58,7 +59,8 @@ class organism():
 
     def act():
         '''
-        implements the action that is defined in self.action() and updates the organisms coordinates (or other params affected by action)
+        TODO: define actions that are possible (+x,-x,+y,-y,no_action)
+
         '''
         # pseudocode below
         organism.x = organism.x + organism.next_actions['x move']
