@@ -1,7 +1,7 @@
 """
 Genomes and the brains they build.
 
-A genome is a fixed-length list of genes. Each gene describes one connection:
+A genome is a fixed-length tuple of genes. Each gene describes one connection:
 
     source (a sensor, or an inner neuron)  --weight-->  sink (an inner neuron, or an action)
 
@@ -12,193 +12,204 @@ not just the strengths.
 
 Inner neurons hold their value from the previous timestep, so recurrence --
 and therefore memory -- is something evolution can stumble into on its own.
+
+Genes are immutable, which is what makes reproduction safe: an offspring's
+genome shares gene objects with its parent's and cannot disturb them.
 """
+
+from __future__ import annotations
 
 import math
 import random
+from dataclasses import dataclass, replace
+from enum import IntEnum
+from typing import TYPE_CHECKING, Final
 
-import capability_utils
-import settings
+from capability_utils import SENSOR_FUNCTIONS, Action, Sensor
 
-# Endpoint kinds. A source is a sensor or an inner neuron; a sink is an inner
-# neuron or an action.
-SENSOR = 0
-INNER = 1
-ACTION = 2
+if TYPE_CHECKING:
+    from organism import Organism, World
+    from settings import Settings
 
 
-class Gene(object):
-    '''One connection in a brain.'''
+class Source(IntEnum):
+    """What drives a connection."""
 
-    __slots__ = ('source_type', 'source_id', 'sink_type', 'sink_id', 'weight')
+    SENSOR = 0
+    INNER = 1
 
-    def __init__(self, source_type, source_id, sink_type, sink_id, weight):
-        self.source_type = source_type
-        self.source_id = source_id
-        self.sink_type = sink_type
-        self.sink_id = sink_id
-        self.weight = weight
 
-    def copy(self):
-        return Gene(self.source_type, self.source_id,
-                    self.sink_type, self.sink_id, self.weight)
+class Sink(IntEnum):
+    """What a connection drives."""
 
-    def describe(self):
-        '''Human-readable form, e.g. "border_distance --(-2.13)--> move_x".'''
-        if self.source_type == SENSOR:
-            source = capability_utils.SENSOR_NAMES[self.source_id]
-        else:
-            source = 'inner_{}'.format(self.source_id)
+    INNER = 0
+    ACTION = 1
 
-        if self.sink_type == INNER:
-            sink = 'inner_{}'.format(self.sink_id)
-        else:
-            sink = capability_utils.ACTION_NAMES[self.sink_id]
 
-        return '{} --({:+.2f})--> {}'.format(source, self.weight, sink)
+@dataclass(frozen=True, slots=True)
+class Gene:
+    """One connection in a brain."""
 
-    def __repr__(self):
-        return '<Gene {}>'.format(self.describe())
+    source_kind: Source
+    source_id: int
+    sink_kind: Sink
+    sink_id: int
+    weight: float
+
+    def describe(self) -> str:
+        """Human-readable form, e.g. `border_distance --(-2.13)--> move_x`."""
+        source = (
+            Sensor(self.source_id)
+            if self.source_kind is Source.SENSOR
+            else f"inner_{self.source_id}"
+        )
+        sink = f"inner_{self.sink_id}" if self.sink_kind is Sink.INNER else Action(self.sink_id)
+        return f"{source} --({self.weight:+.2f})--> {sink}"
+
+
+type Genome = tuple[Gene, ...]
+
+_MUTABLE_FIELDS: Final = ("source_kind", "source_id", "sink_kind", "sink_id", "weight")
 
 
 # ----------------------------------------------------------------------------
 # Building and mutating genomes
 # ----------------------------------------------------------------------------
 
-def random_gene():
-    '''A single connection between two randomly chosen endpoints.'''
-    source_type = random.choice((SENSOR, INNER))
-    sink_type = random.choice((INNER, ACTION))
-    return Gene(source_type=source_type,
-                source_id=_random_source_id(source_type),
-                sink_type=sink_type,
-                sink_id=_random_sink_id(sink_type),
-                weight=random.uniform(-settings.max_weight, settings.max_weight))
+
+def random_gene(config: Settings) -> Gene:
+    """A single connection between two randomly chosen endpoints."""
+    source_kind = random.choice(list(Source))
+    sink_kind = random.choice(list(Sink))
+    return Gene(
+        source_kind=source_kind,
+        source_id=_random_source_id(source_kind, config),
+        sink_kind=sink_kind,
+        sink_id=_random_sink_id(sink_kind, config),
+        weight=random.uniform(-config.max_weight, config.max_weight),
+    )
 
 
-def random_genome(n_genes=None):
-    '''A full genome of unbiased random connections, for generation zero.'''
-    if n_genes is None:
-        n_genes = settings.n_genes
-    return [random_gene() for _ in range(n_genes)]
+def random_genome(config: Settings) -> Genome:
+    """A full genome of unbiased random connections, for generation zero."""
+    return tuple(random_gene(config) for _ in range(config.n_genes))
 
 
-def mutate(genome, rate=None):
-    '''
-    Return a copy of the genome with point mutations applied.
+def mutate(genome: Genome, config: Settings, rate: float | None = None) -> Genome:
+    """
+    Return a new genome with point mutations applied.
 
     Each gene independently has `rate` chance of being altered. When a gene is
     hit, one of its five fields changes: rewiring an endpoint restructures the
-    brain, while a weight change only retunes it.
-    '''
+    brain, while a weight change only retunes it. Untouched genes are shared
+    with the parent rather than copied, since genes are immutable.
+    """
     if rate is None:
-        rate = settings.point_mutation_rate
-
-    child = []
-    for gene in genome:
-        gene = gene.copy()
-        if random.random() < rate:
-            _mutate_gene_in_place(gene)
-        child.append(gene)
-    return child
+        rate = config.point_mutation_rate
+    return tuple(_mutated(gene, config) if random.random() < rate else gene for gene in genome)
 
 
-def _mutate_gene_in_place(gene):
-    field = random.choice(('source_type', 'source_id', 'sink_type', 'sink_id', 'weight'))
-
-    if field == 'source_type':
-        gene.source_type = SENSOR if gene.source_type == INNER else INNER
-        # The new endpoint kind has a different id range, so redraw the id too.
-        gene.source_id = _random_source_id(gene.source_type)
-    elif field == 'source_id':
-        gene.source_id = _random_source_id(gene.source_type)
-    elif field == 'sink_type':
-        gene.sink_type = ACTION if gene.sink_type == INNER else INNER
-        gene.sink_id = _random_sink_id(gene.sink_type)
-    elif field == 'sink_id':
-        gene.sink_id = _random_sink_id(gene.sink_type)
-    else:
-        nudged = gene.weight + random.gauss(0, settings.weight_jitter)
-        gene.weight = max(-settings.max_weight, min(settings.max_weight, nudged))
-
-
-def _random_source_id(source_type):
-    if source_type == SENSOR:
-        return random.randrange(capability_utils.N_SENSORS)
-    return random.randrange(settings.n_inner_neurons)
+def _mutated(gene: Gene, config: Settings) -> Gene:
+    """One gene with a single randomly chosen field changed."""
+    match random.choice(_MUTABLE_FIELDS):
+        case "source_kind":
+            # The new endpoint kind has a different id range, so redraw the id too.
+            kind = Source.SENSOR if gene.source_kind is Source.INNER else Source.INNER
+            return replace(gene, source_kind=kind, source_id=_random_source_id(kind, config))
+        case "source_id":
+            return replace(gene, source_id=_random_source_id(gene.source_kind, config))
+        case "sink_kind":
+            kind = Sink.INNER if gene.sink_kind is Sink.ACTION else Sink.ACTION
+            return replace(gene, sink_kind=kind, sink_id=_random_sink_id(kind, config))
+        case "sink_id":
+            return replace(gene, sink_id=_random_sink_id(gene.sink_kind, config))
+        case _:
+            nudged = gene.weight + random.gauss(0.0, config.weight_jitter)
+            clamped = max(-config.max_weight, min(config.max_weight, nudged))
+            return replace(gene, weight=clamped)
 
 
-def _random_sink_id(sink_type):
-    if sink_type == INNER:
-        return random.randrange(settings.n_inner_neurons)
-    return random.randrange(capability_utils.N_ACTIONS)
+def _random_source_id(kind: Source, config: Settings) -> int:
+    if kind is Source.SENSOR:
+        return random.randrange(len(Sensor))
+    return random.randrange(config.n_inner_neurons)
+
+
+def _random_sink_id(kind: Sink, config: Settings) -> int:
+    if kind is Sink.INNER:
+        return random.randrange(config.n_inner_neurons)
+    return random.randrange(len(Action))
 
 
 # ----------------------------------------------------------------------------
 # The brain
 # ----------------------------------------------------------------------------
 
-class Brain(object):
-    '''
+type _Connection = tuple[int, bool, int, float]
+"""(sink_id, whether the source is a sensor rather than an inner neuron, source_id, weight)"""
+
+
+class Brain:
+    """
     The runnable form of a genome.
 
-    Construction sorts the genome's connections by what they feed, and works
-    out which sensors this particular organism actually depends on. Most
-    genomes ignore most senses, and skipping the unused ones is what keeps a
-    generation cheap enough to watch in real time.
-    '''
+    Construction sorts the genome's connections by what they feed and works out
+    which sensors this particular organism actually depends on. Most genomes
+    ignore most senses, and skipping the unused ones is what keeps a generation
+    cheap enough to watch in real time.
+    """
 
-    def __init__(self, genome):
+    __slots__ = ("_inner", "_to_actions", "_to_inner", "genome", "needed_sensors")
+
+    def __init__(self, genome: Genome, config: Settings) -> None:
         self.genome = genome
-
-        self.inner_connections = []   # (sink_id, source_type, source_id, weight)
-        self.action_connections = []  # (sink_id, source_type, source_id, weight)
-        needed = set()
+        self._to_inner: list[_Connection] = []
+        self._to_actions: list[_Connection] = []
+        needed: set[Sensor] = set()
 
         for gene in genome:
-            connection = (gene.sink_id, gene.source_type, gene.source_id, gene.weight)
-            if gene.sink_type == INNER:
-                self.inner_connections.append(connection)
-            else:
-                self.action_connections.append(connection)
-            if gene.source_type == SENSOR:
-                needed.add(gene.source_id)
+            from_sensor = gene.source_kind is Source.SENSOR
+            if from_sensor:
+                needed.add(Sensor(gene.source_id))
 
-        self.needed_sensors = sorted(needed)
-        self.inner_values = [0.0] * settings.n_inner_neurons
+            connection = (gene.sink_id, from_sensor, gene.source_id, gene.weight)
+            target = self._to_inner if gene.sink_kind is Sink.INNER else self._to_actions
+            target.append(connection)
 
-    def reset(self):
-        '''Clear working memory. Called when an organism starts a generation.'''
-        self.inner_values = [0.0] * settings.n_inner_neurons
+        self.needed_sensors: tuple[Sensor, ...] = tuple(sorted(needed))
+        self._inner = [0.0] * config.n_inner_neurons
 
-    def think(self, org, world):
-        '''
-        Run one timestep of the brain and return a level in [-1, 1] per action.
+    def reset(self) -> None:
+        """Clear working memory. Called when an organism starts a generation."""
+        self._inner = [0.0] * len(self._inner)
 
-        Inner neurons are updated from the sensors and from their own previous
+    def think(self, org: Organism, world: World) -> list[float]:
+        """
+        Run one timestep and return a level in [-1, 1] per action.
+
+        Inner neurons update from the sensors and from their own previous
         values; the actions are then driven by the sensors and the freshly
         updated inner neurons.
-        '''
-        sensors = {}
-        for index in self.needed_sensors:
-            sensors[index] = capability_utils.SENSORS[index][1](org, world)
+        """
+        readings = {
+            int(sensor): SENSOR_FUNCTIONS[sensor](org, world) for sensor in self.needed_sensors
+        }
+        previous = self._inner
 
-        previous_inner = self.inner_values
-
-        inner_sums = [0.0] * settings.n_inner_neurons
-        for sink_id, source_type, source_id, weight in self.inner_connections:
-            value = sensors[source_id] if source_type == SENSOR else previous_inner[source_id]
+        inner_sums = [0.0] * len(previous)
+        for sink_id, from_sensor, source_id, weight in self._to_inner:
+            value = readings[source_id] if from_sensor else previous[source_id]
             inner_sums[sink_id] += value * weight
-        new_inner = [math.tanh(total) for total in inner_sums]
+        current = [math.tanh(total) for total in inner_sums]
 
-        action_sums = [0.0] * capability_utils.N_ACTIONS
-        for sink_id, source_type, source_id, weight in self.action_connections:
-            value = sensors[source_id] if source_type == SENSOR else new_inner[source_id]
+        action_sums = [0.0] * len(Action)
+        for sink_id, from_sensor, source_id, weight in self._to_actions:
+            value = readings[source_id] if from_sensor else current[source_id]
             action_sums[sink_id] += value * weight
 
-        self.inner_values = new_inner
+        self._inner = current
         return [math.tanh(total) for total in action_sums]
 
-    def describe(self):
-        '''The whole wiring diagram as text, one connection per line.'''
-        return '\n'.join(gene.describe() for gene in self.genome)
+    def describe(self) -> str:
+        """The whole wiring diagram as text, one connection per line."""
+        return "\n".join(gene.describe() for gene in self.genome)

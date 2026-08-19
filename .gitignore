@@ -1,3 +1,8 @@
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+
+# uv creates this locally; uv.lock is committed so runs are reproducible.
+.venv/
