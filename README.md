@@ -4,12 +4,39 @@ Little guys on a grid. Nobody tells them what to do — the only rule is who get
 to reproduce, and the behaviour that follows from that is the interesting part.
 
 ```bash
+uv run python server.py
+```
+
+Then open <http://127.0.0.1:8000>. Or run it from the terminal instead:
+
+```bash
 uv run python execute.py
 ```
 
 `uv` reads `pyproject.toml` and `.python-version`, installs Python 3.13 and the
 dependencies on first run, and needs no activated virtualenv. Generation 0 is
 random noise; watch the survival percentage climb.
+
+## The web UI
+
+The browser configures a run; the server streams it back a frame at a time.
+Alongside the world settings — objective, obstacles, population, generations,
+seed — two dropdowns of checkboxes control **what the creatures are allowed to
+be**: which senses and which actions evolution may wire up.
+
+Switching a capability off removes it from the search space entirely. No new
+gene will target it, so whatever behaviour depended on it has to be found some
+other way, or cannot be found at all. Leave only `x_position` and `bias`
+against the `left` objective and evolution still solves it, because that is all
+the problem needs; take away `pheromone_*` and no amount of running will
+produce trail-following.
+
+Changing the controls and pressing Run abandons whatever is in flight and
+starts over, so it stays responsive while a long run is going.
+
+Every menu is built from `/api/options`, which reads the enums and registries
+directly — a new sense, action, objective or barrier layout appears in the
+browser with no front-end change.
 
 ## How it works
 
@@ -116,6 +143,8 @@ Each of these is a single edit, and nothing else needs to change:
   animation draws its zones without being taught about them
 - **a new obstacle layout** — a function plus an entry in `barriers.LAYOUTS`
 
+All four show up in the web UI automatically.
+
 `Settings` is frozen, so vary it with `dataclasses.replace` rather than by
 assigning to module globals:
 
@@ -139,15 +168,17 @@ world = World(config=config, objective="there-and-back")
 | `objectives.py` | what it takes to reproduce |
 | `barriers.py` | obstacle layouts |
 | `inspect_utils.py` | saving, loading and drawing creatures |
-| `execute.py` | the runner, the live animation and the comparison mode |
-| `test_simulation.py` | invariant checks — run `uv run pytest` |
+| `execute.py` | the terminal runner, live animation and comparison mode |
+| `server.py` | the web UI's backend, streaming runs over a websocket |
+| `static/` | the browser front end |
+| `test_simulation.py`, `test_server.py` | invariant checks — run `uv run pytest` |
 | `sandbox.ipynb` | design notes and a scratchpad for poking at individual creatures |
 
 ## Development
 
 ```bash
 uv sync                 # create the environment
-uv run pytest           # 59 invariant checks
+uv run pytest           # 90 invariant checks
 uv run ruff check .     # lint
 uv run ruff format .    # format
 ```

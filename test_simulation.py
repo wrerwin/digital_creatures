@@ -536,6 +536,137 @@ def test_a_child_inherits_its_parents_wiring(config: Settings) -> None:
     assert child.brain.describe() == parent.brain.describe()
 
 
+# ----------------------------------------------------------------------------
+# Capabilities: which senses and actions evolution is allowed to use
+# ----------------------------------------------------------------------------
+
+
+def test_disabled_capabilities_are_never_wired_up(config: Settings) -> None:
+    """
+    The whole point of the capability switches: a disabled sense must not appear.
+
+    Checked across heavy mutation, because gene creation and gene mutation are
+    separate code paths and only one of them failing would be easy to miss.
+    """
+    limited = config.with_capabilities(
+        sensors=[Sensor.X_POSITION, Sensor.BIAS],
+        actions=[Action.MOVE_X, Action.STAY],
+    )
+
+    genome = brain_utils.random_genome(limited)
+    for _ in range(200):
+        genome = brain_utils.mutate(genome, limited, rate=0.5)
+        for gene in genome:
+            if gene.source_kind is Source.SENSOR:
+                assert Sensor(gene.source_id) in limited.enabled_sensors
+            if gene.sink_kind is Sink.ACTION:
+                assert Action(gene.sink_id) in limited.enabled_actions
+
+
+def test_a_restricted_population_only_consults_what_it_has(config: Settings) -> None:
+    """A whole world of restricted creatures must stay within its capabilities."""
+    limited = replace(config, steps_per_generation=20).with_capabilities(
+        sensors=[Sensor.Y_POSITION], actions=[Action.MOVE_Y]
+    )
+
+    world = World(config=limited)
+    world.run_generation()
+    for org in world.organisms:
+        assert set(org.brain.needed_sensors) <= {Sensor.Y_POSITION}
+
+
+def test_capabilities_cannot_be_emptied(config: Settings) -> None:
+    """
+    A creature with no senses or no actions cannot evolve at all.
+
+    Rejected up front, because the alternative is an IndexError from deep
+    inside gene creation that says nothing about the real mistake.
+    """
+    with pytest.raises(ValueError, match="at least one sensor"):
+        config.with_capabilities(sensors=[])
+    with pytest.raises(ValueError, match="at least one action"):
+        config.with_capabilities(actions=[])
+
+
+def test_capability_order_does_not_change_a_seeded_run(config: Settings) -> None:
+    """
+    The same selection ticked in a different order must give the same run.
+
+    The UI hands back whatever order the checkboxes were in, so normalising is
+    what keeps a shared seed reproducible.
+    """
+    forwards = config.with_capabilities(sensors=[Sensor.BIAS, Sensor.AGE])
+    backwards = config.with_capabilities(sensors=[Sensor.AGE, Sensor.BIAS])
+    assert forwards == backwards
+
+    random.seed(11)
+    first = brain_utils.random_genome(forwards)
+    random.seed(11)
+    second = brain_utils.random_genome(backwards)
+    assert first == second
+
+
+def test_restricting_capabilities_leaves_the_enums_alone(config: Settings) -> None:
+    """Disabling a sense for one run must not affect any other world."""
+    config.with_capabilities(sensors=[Sensor.BIAS], actions=[Action.STAY])
+    assert len(Sensor) > 1, "capability selection mutated the Sensor enum"
+
+    unrestricted = World(config=config, n_organisms=4)
+    assert set(unrestricted.config.enabled_sensors) == set(Sensor)
+
+
+# ----------------------------------------------------------------------------
+# Driving a generation step by step
+# ----------------------------------------------------------------------------
+
+
+def test_iter_generation_yields_every_step_then_returns_survivors(config: Settings) -> None:
+    """The generator form is what lets the web server stream a run."""
+    world = World(config=config)
+    generation = world.iter_generation()
+
+    steps = []
+    try:
+        while True:
+            steps.append(next(generation))
+    except StopIteration as finished:
+        survivors = finished.value
+
+    assert steps == list(range(config.steps_per_generation))
+    assert 0 <= survivors <= config.n_organisms
+    assert world.generation == 1
+
+
+def test_abandoning_a_generation_does_not_select_or_repopulate(config: Settings) -> None:
+    """
+    A run stopped halfway must leave the world alone rather than breeding from it.
+
+    The web UI abandons the generator whenever the Stop button is pressed, or a
+    new run replaces the current one.
+    """
+    world = World(config=config)
+    original = [org.genome for org in world.organisms]
+
+    generation = world.iter_generation()
+    for _ in range(5):
+        next(generation)
+    generation.close()
+
+    assert world.generation == 0, "an abandoned generation should not count"
+    assert [org.genome for org in world.organisms] == original, "abandoned run bred anyway"
+
+
+def test_run_generation_matches_the_generator(config: Settings) -> None:
+    """`run_generation` is a thin wrapper, and must stay equivalent to it."""
+    seen: list[int] = []
+    world = World(config=config)
+    survivors = world.run_generation(on_step=lambda _world, step: seen.append(step))
+
+    assert seen == list(range(config.steps_per_generation))
+    assert 0 <= survivors <= config.n_organisms
+    assert world.generation == 1
+
+
 def test_evolution_improves_survival() -> None:
     """
     The whole point: survival must climb well above where random genomes start.
