@@ -13,10 +13,9 @@ random noise; watch the survival percentage climb.
 
 ## How it works
 
-A generation runs for a fixed number of timesteps. At the end, a **survival
-criterion** decides who reproduces — by default, "be in the left fifth of the
-world". Survivors are cloned with mutation until the population is full again,
-the grid is cleared, and the next generation starts.
+A generation runs for a fixed number of timesteps. At the end, an **objective**
+decides who reproduces. Survivors are cloned with mutation until the population
+is full again, the grid is cleared, and the next generation starts.
 
 Each organism has a **genome**: a fixed-length tuple of genes, where every gene
 is one connection.
@@ -31,12 +30,102 @@ onto a sense it never used, or hand an action over to a different part of its
 brain. Inner neurons keep their value between timesteps, so recurrence — and
 therefore memory — is something evolution can find on its own.
 
-Every organism's wiring can be read back as text, which is how you work out
-what a behaviour actually *is*:
+Every organism's wiring can be read back as text, or drawn with `--draw-brain`:
 
 ```
 border_distance --(-2.13)--> move_x
 inner_2 --(+1.44)--> move_forward
+```
+
+## What a creature can sense
+
+All readings are held in `[-1, 1]` so no single sense dominates a brain.
+
+| group | senses |
+| --- | --- |
+| where am I | `x_position`, `y_position`, `border_distance` |
+| what is around me | `population_density`, `neighbours_east`, `neighbours_north`, `nearest_neighbour`, `blocked_forward`, `blocked_left`, `blocked_right` |
+| what can I smell | `pheromone_here`, `pheromone_east`, `pheromone_north` |
+| what was I doing | `last_move_x`, `last_move_y`, `age`, `random`, `bias` |
+
+The `neighbours_*` pair is signed and directional — `+1` means every neighbour
+in range lies that way. That is what makes following, flocking and fleeing
+reachable at all; `population_density` alone only says "it is crowded here".
+
+## What a creature can do
+
+`move_x`, `move_y`, `move_forward`, `move_left`, `move_random`, `stay`, and
+`emit_pheromone`. The action neurons compete rather than take turns: their
+levels sum into an urge per axis, resolved probabilistically into one step.
+
+`emit_pheromone` is the only way one creature can change what another
+perceives. Scent decays every timestep, so trails fade unless they are
+maintained.
+
+## Objectives
+
+The objective is the entire selection pressure, and swapping it is the main
+dial for changing what evolves.
+
+| objective | rule |
+| --- | --- |
+| `left`, `right`, `centre`, `corners` | be inside the region when the generation ends |
+| `stay`, `stay-centre` | spend at least half the generation inside the region |
+| `there-and-back` | touch the east band, then finish in the west one |
+| `top-to-bottom` | touch the north band, then finish in the south one |
+| `hazard` | survive a roaming circle that kills whatever it touches |
+
+`stay` is much harsher than `left`: arriving late is worthless. The two-phase
+objectives are the first that cannot be solved by a fixed heading — a creature
+has to change its mind partway through, which means routing `age` or a
+recurrent inner neuron into its movement.
+
+## Obstacles
+
+`--barriers none|wall|slalom|pillars|funnel`. Barriers are solid cells that
+block movement and register on the `blocked_*` senses, which turns "head west"
+from a complete solution into one that strands a creature in a dead end.
+
+## Things to try
+
+```bash
+uv run python execute.py --objective stay --barriers slalom
+uv run python execute.py --compare left,stay,corners,hazard   # race them, headless
+uv run python execute.py --objective hazard --watch 1         # watch things die
+uv run python execute.py --watch 0                            # numbers only, fastest
+uv run python execute.py --seed 42                            # repeatable run
+```
+
+Keep a creature you like, and start a later run from it:
+
+```bash
+uv run python execute.py --objective corners --save-genome good_creature.json
+uv run python execute.py --load-genome good_creature.json --draw-brain
+```
+
+Genomes are saved as JSON keyed by sense and action *names*, so a file stays
+valid after new capabilities are added.
+
+## Extending it
+
+Each of these is a single edit, and nothing else needs to change:
+
+- **a new sense** — a member of `Sensor` plus its function in `capability_utils.py`
+- **a new action** — a member of `Action`, plus how it resolves in `Organism.act`
+- **a new objective** — a subclass of `Objective` in `objectives.py`; the
+  animation draws its zones without being taught about them
+- **a new obstacle layout** — a function plus an entry in `barriers.LAYOUTS`
+
+`Settings` is frozen, so vary it with `dataclasses.replace` rather than by
+assigning to module globals:
+
+```python
+from dataclasses import replace
+from organism import World
+from settings import Settings
+
+config = replace(Settings(), point_mutation_rate=0.08, pheromone_decay=0.99)
+world = World(config=config, objective="there-and-back")
 ```
 
 ## Files
@@ -46,47 +135,33 @@ inner_2 --(+1.44)--> move_forward
 | `settings.py` | `Settings`, a frozen dataclass holding every tunable number |
 | `capability_utils.py` | the `Sensor` and `Action` enums — what a creature can perceive and do |
 | `brain_utils.py` | genes, mutation, and the network a genome builds |
-| `organism.py` | `Organism`, `World`, the generational cycle, and the survival criteria |
-| `execute.py` | the runner and the live animation |
+| `organism.py` | `Organism`, `World`, the grid layers, and the generational cycle |
+| `objectives.py` | what it takes to reproduce |
+| `barriers.py` | obstacle layouts |
+| `inspect_utils.py` | saving, loading and drawing creatures |
+| `execute.py` | the runner, the live animation and the comparison mode |
 | `test_simulation.py` | invariant checks — run `uv run pytest` |
 | `sandbox.ipynb` | design notes and a scratchpad for poking at individual creatures |
-
-## Knobs worth turning
-
-```bash
-uv run python execute.py --criterion corners   # left, right, centre, corners
-uv run python execute.py --watch 0             # skip the animation, just print numbers
-uv run python execute.py --watch 5             # animate every 5th generation
-uv run python execute.py --seed 42             # repeatable run
-```
-
-The survival criterion is the whole selection pressure. Adding one is a
-four-line function at the bottom of `organism.py` plus an entry in `CRITERIA`;
-the animation works out how to shade the new zone by itself.
-
-Adding a sense or an action is a single enum member in `capability_utils.py`
-plus its function — no other file needs to change, and evolution starts using
-it on the next run.
-
-`Settings` is frozen, so vary it with `dataclasses.replace` rather than by
-assigning to module globals:
-
-```python
-from dataclasses import replace
-from organism import CRITERIA, World
-from settings import Settings
-
-config = replace(Settings(), point_mutation_rate=0.08, n_organisms=500)
-world = World(config=config, criterion=CRITERIA["corners"])
-```
 
 ## Development
 
 ```bash
 uv sync                 # create the environment
-uv run pytest           # 27 invariant checks
+uv run pytest           # 59 invariant checks
 uv run ruff check .     # lint
 uv run ruff format .    # format
 ```
 
 `uv.lock` is committed, so `uv sync` reproduces the exact dependency set.
+
+## Known limits
+
+Reproduction is asexual — mutation is the only source of variation, with no
+crossover between survivors.
+
+Selection is all-or-nothing: an objective either passes a creature or does not,
+with no partial credit. Objectives that almost nobody can satisfy early on
+therefore have no gradient to climb, and the population reseeds from random
+genomes whenever a generation produces zero survivors. Conjunctive goals need
+their two halves chosen so that some creatures get there by luck in the first
+few generations.

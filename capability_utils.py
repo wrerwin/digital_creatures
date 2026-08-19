@@ -8,6 +8,14 @@ file needs to change.
 
 Sensor functions take (organism, world) and return a float in [-1, 1], so that
 no single sensor dominates the weighted sums inside a brain.
+
+The senses fall into four groups:
+
+- where am I           position, distance to the walls
+- what is around me    neighbours and obstacles, and which *direction* they lie in
+- what can I smell     the pheromone layer, which is the only channel one
+                       organism has for affecting what another perceives
+- what was I doing     previous movement, age, noise, a constant
 """
 
 from __future__ import annotations
@@ -21,9 +29,6 @@ if TYPE_CHECKING:
 
     from organism import Organism, World
 
-# Radius, in cells, of the neighbourhood an organism can feel around itself.
-DENSITY_RADIUS: Final = 4
-
 
 class Sensor(IntEnum):
     """Everything an organism can perceive. Values index into sensor readings."""
@@ -32,12 +37,20 @@ class Sensor(IntEnum):
     Y_POSITION = 1
     BORDER_DISTANCE = 2
     POPULATION_DENSITY = 3
-    BLOCKED_FORWARD = 4
-    LAST_MOVE_X = 5
-    LAST_MOVE_Y = 6
-    AGE = 7
-    RANDOM = 8
-    BIAS = 9
+    NEIGHBOURS_EAST = 4
+    NEIGHBOURS_NORTH = 5
+    NEAREST_NEIGHBOUR = 6
+    BLOCKED_FORWARD = 7
+    BLOCKED_LEFT = 8
+    BLOCKED_RIGHT = 9
+    PHEROMONE_HERE = 10
+    PHEROMONE_EAST = 11
+    PHEROMONE_NORTH = 12
+    LAST_MOVE_X = 13
+    LAST_MOVE_Y = 14
+    AGE = 15
+    RANDOM = 16
+    BIAS = 17
 
     def __str__(self) -> str:
         return self.name.lower()
@@ -60,11 +73,17 @@ class Action(IntEnum):
     MOVE_FORWARD = 2
     """Keep going the way you last went."""
 
-    MOVE_RANDOM = 3
+    MOVE_LEFT = 3
+    """Turn ninety degrees left of the last heading and go."""
+
+    MOVE_RANDOM = 4
     """Take an arbitrary step."""
 
-    STAY = 4
+    STAY = 5
     """Suppress movement."""
+
+    EMIT_PHEROMONE = 6
+    """Lay scent on the current cell, for others (and yourself) to smell later."""
 
     def __str__(self) -> str:
         return self.name.lower()
@@ -74,7 +93,7 @@ type SensorFn = Callable[[Organism, World], float]
 
 
 # ----------------------------------------------------------------------------
-# Sensor implementations
+# Where am I
 # ----------------------------------------------------------------------------
 
 
@@ -95,17 +114,85 @@ def sense_border_distance(org: Organism, world: World) -> float:
     return min(to_wall / half_span, 1.0)
 
 
+# ----------------------------------------------------------------------------
+# What is around me
+# ----------------------------------------------------------------------------
+
+
 def sense_population_density(org: Organism, world: World) -> float:
-    """Fraction of nearby cells that hold another organism."""
-    return world.population_density(org.x, org.y, DENSITY_RADIUS)
+    """How crowded it is nearby, with no indication of direction."""
+    return world.population_density(org.x, org.y, world.config.sense_radius)
+
+
+def sense_neighbours_east(org: Organism, world: World) -> float:
+    """
+    Which side holds more neighbours: +1 all east, -1 all west, 0 balanced.
+
+    Paired with `neighbours_north`, this is what makes following, flocking and
+    fleeing reachable at all -- density alone only says "it is crowded here".
+    """
+    return world.neighbour_gradient(org.x, org.y, world.config.sense_radius)[0]
+
+
+def sense_neighbours_north(org: Organism, world: World) -> float:
+    """Which side holds more neighbours: +1 all north, -1 all south, 0 balanced."""
+    return world.neighbour_gradient(org.x, org.y, world.config.sense_radius)[1]
+
+
+def sense_nearest_neighbour(org: Organism, world: World) -> float:
+    """1 when another organism is adjacent, 0 when none is within sensing range."""
+    return world.nearest_neighbour(org.x, org.y, world.config.sense_radius)
 
 
 def sense_blocked_forward(org: Organism, world: World) -> float:
-    """1 if the cell the organism last moved toward is now a wall or another organism."""
-    if org.last_dx == 0 and org.last_dy == 0:
+    """1 if the cell the organism last moved toward is a wall, barrier or organism."""
+    return _blocked(org, world, quarter_turns=0)
+
+
+def sense_blocked_left(org: Organism, world: World) -> float:
+    """1 if the cell ninety degrees left of the current heading is blocked."""
+    return _blocked(org, world, quarter_turns=1)
+
+
+def sense_blocked_right(org: Organism, world: World) -> float:
+    """1 if the cell ninety degrees right of the current heading is blocked."""
+    return _blocked(org, world, quarter_turns=-1)
+
+
+def _blocked(org: Organism, world: World, quarter_turns: int) -> float:
+    """Whether the cell that many quarter-turns left of the heading is unavailable."""
+    dx, dy = org.last_dx, org.last_dy
+    if dx == 0 and dy == 0:
         return 0.0
-    ahead_x, ahead_y = org.x + org.last_dx, org.y + org.last_dy
-    return 0.0 if world.can_move_to(ahead_x, ahead_y) else 1.0
+    # Rotating a quarter turn to the left maps (dx, dy) -> (-dy, dx).
+    for _ in range(quarter_turns % 4):
+        dx, dy = -dy, dx
+    return 0.0 if world.can_move_to(org.x + dx, org.y + dy) else 1.0
+
+
+# ----------------------------------------------------------------------------
+# What can I smell
+# ----------------------------------------------------------------------------
+
+
+def sense_pheromone_here(org: Organism, world: World) -> float:
+    """Strength of the scent on the organism's own cell."""
+    return world.pheromone_at(org.x, org.y)
+
+
+def sense_pheromone_east(org: Organism, world: World) -> float:
+    """Which side smells stronger: +1 east, -1 west, 0 balanced or unscented."""
+    return world.pheromone_gradient(org.x, org.y, world.config.sense_radius)[0]
+
+
+def sense_pheromone_north(org: Organism, world: World) -> float:
+    """Which side smells stronger: +1 north, -1 south, 0 balanced or unscented."""
+    return world.pheromone_gradient(org.x, org.y, world.config.sense_radius)[1]
+
+
+# ----------------------------------------------------------------------------
+# What was I doing
+# ----------------------------------------------------------------------------
 
 
 def sense_last_move_x(org: Organism, world: World) -> float:
@@ -138,7 +225,15 @@ SENSOR_FUNCTIONS: Final[dict[Sensor, SensorFn]] = {
     Sensor.Y_POSITION: sense_y_position,
     Sensor.BORDER_DISTANCE: sense_border_distance,
     Sensor.POPULATION_DENSITY: sense_population_density,
+    Sensor.NEIGHBOURS_EAST: sense_neighbours_east,
+    Sensor.NEIGHBOURS_NORTH: sense_neighbours_north,
+    Sensor.NEAREST_NEIGHBOUR: sense_nearest_neighbour,
     Sensor.BLOCKED_FORWARD: sense_blocked_forward,
+    Sensor.BLOCKED_LEFT: sense_blocked_left,
+    Sensor.BLOCKED_RIGHT: sense_blocked_right,
+    Sensor.PHEROMONE_HERE: sense_pheromone_here,
+    Sensor.PHEROMONE_EAST: sense_pheromone_east,
+    Sensor.PHEROMONE_NORTH: sense_pheromone_north,
     Sensor.LAST_MOVE_X: sense_last_move_x,
     Sensor.LAST_MOVE_Y: sense_last_move_y,
     Sensor.AGE: sense_age,

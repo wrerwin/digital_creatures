@@ -2,9 +2,18 @@
 The organisms and the world they live in.
 
 A generation runs for `Settings.steps_per_generation` timesteps. At the end of
-it a survival criterion decides who reproduces; everybody else dies. Survivors
-are cloned with mutation until the population is full again, and the next
-generation starts from scratch on an empty grid.
+it an objective decides who reproduces; everybody else dies. Survivors are
+cloned with mutation until the population is full again, and the next
+generation starts from scratch on a cleared grid.
+
+The world holds three layers over the same grid:
+
+- `barriers`    solid cells, fixed for the whole run
+- `occupancy`   which cells hold a living organism, changing every step
+- `pheromone`   scent, deposited by organisms and decaying every step
+
+Barriers make navigation a real problem; pheromone is the only way one
+organism can change what another perceives.
 """
 
 from __future__ import annotations
@@ -14,9 +23,11 @@ from typing import TYPE_CHECKING, Final
 
 import numpy as np
 
+import barriers as barrier_layouts
 import brain_utils
 import settings
 from capability_utils import Action, Sensor, read_sensors
+from objectives import OBJECTIVES, Objective
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -33,9 +44,6 @@ DIRECTIONS: Final = (
     (1, -1), (1, 0), (1, 1),
 )  # fmt: skip
 
-type Criterion = Callable[[int, int, "World"], bool]
-"""Given a position and the world, decide whether an organism there survives."""
-
 
 class Organism:
     """
@@ -46,7 +54,19 @@ class Organism:
     actually consults is decided by its genome.
     """
 
-    __slots__ = ("age", "brain", "config", "genome", "last_dx", "last_dy", "name", "x", "y")
+    __slots__ = (
+        "age",
+        "alive",
+        "brain",
+        "config",
+        "genome",
+        "last_dx",
+        "last_dy",
+        "name",
+        "progress",
+        "x",
+        "y",
+    )
 
     def __init__(
         self,
@@ -66,6 +86,10 @@ class Organism:
         self.last_dx = 0
         self.last_dy = 0
         self.age = 0
+        self.alive = True
+
+        self.progress: dict[str, float] = {}
+        """Scratch space for objectives that accumulate history over a generation."""
 
     @property
     def placed(self) -> bool:
@@ -103,6 +127,11 @@ class Organism:
         urge_x += forward * self.last_dx
         urge_y += forward * self.last_dy
 
+        # A quarter turn to the left maps (dx, dy) -> (-dy, dx).
+        leftward = levels[Action.MOVE_LEFT]
+        urge_x += leftward * -self.last_dy
+        urge_y += leftward * self.last_dx
+
         if wander := levels[Action.MOVE_RANDOM]:
             dx, dy = random.choice(DIRECTIONS)
             urge_x += wander * dx
@@ -113,15 +142,18 @@ class Organism:
         urge_x *= 1.0 - stillness
         urge_y *= 1.0 - stillness
 
+        if (emission := levels[Action.EMIT_PHEROMONE]) > 0:
+            world.deposit_pheromone(self.x, self.y, emission * self.config.pheromone_deposit)
+
         self.move(_urge_to_step(urge_x), _urge_to_step(urge_y), world)
         self.age += 1
 
     def move(self, dx: int, dy: int, world: World) -> None:
         """
-        Try to step by (dx, dy), refusing moves into walls or occupied cells.
+        Try to step by (dx, dy), refusing moves into walls, barriers or organisms.
 
         A blocked diagonal falls back to whichever single axis is still open,
-        which lets organisms slide along a wall instead of sticking to it.
+        which lets organisms slide along an obstacle instead of sticking to it.
         """
         if dx == 0 and dy == 0:
             self.last_dx = self.last_dy = 0
@@ -135,7 +167,7 @@ class Organism:
                 self.last_dx, self.last_dy = step_x, step_y
                 return
 
-        # Fully boxed in: keep the heading so BLOCKED_FORWARD can report it.
+        # Fully boxed in: keep the heading so the blocked_* senses can report it.
         self.last_dx, self.last_dy = dx, dy
 
     # ------------------------------------------------------------------
@@ -152,7 +184,13 @@ class Organism:
         return Organism(self.config, genome=brain_utils.mutate(self.genome, self.config))
 
     def __repr__(self) -> str:
-        return f"<Organism at ({self.x}, {self.y})>"
+        state = "" if self.alive else ", dead"
+        return f"<Organism at ({self.x}, {self.y}){state}>"
+
+
+def _clamp(value: float) -> float:
+    """Hold a sensor reading inside [-1, 1]."""
+    return max(-1.0, min(1.0, value))
 
 
 def _urge_to_step(urge: float) -> int:
@@ -173,18 +211,19 @@ class World:
     The grid, the population living on it, and the generational cycle.
 
     Occupancy is kept in a numpy array alongside the organism list: the list is
-    what we iterate over, the array is what makes "is that cell taken?" and
-    "how crowded is it here?" cheap enough to ask on every timestep.
+    what we iterate over, the array is what makes "is that cell taken?", "how
+    crowded is it here?" and "which way are the others?" cheap enough to ask on
+    every timestep.
     """
 
     def __init__(
         self,
         config: Settings | None = None,
-        criterion: Criterion | None = None,
+        objective: Objective | str | None = None,
         n_organisms: int | None = None,
     ) -> None:
         self.config = config or settings.DEFAULT
-        self.criterion = criterion or left_edge
+        self.objective = _resolve_objective(objective)
         self.n_organisms = n_organisms if n_organisms is not None else self.config.n_organisms
 
         self.width = self.config.width
@@ -192,7 +231,15 @@ class World:
 
         self.generation = 0
         self.step = 0
+
+        self.barriers: npt.NDArray[np.bool_] = barrier_layouts.build(
+            self.config.barrier_layout, self.width, self.height
+        )
         self.occupancy: npt.NDArray[np.bool_] = np.zeros((self.width, self.height), dtype=bool)
+        self.pheromone: npt.NDArray[np.float32] = np.zeros(
+            (self.width, self.height), dtype=np.float32
+        )
+
         self.organisms: list[Organism] = self.build_initial_config()
 
     # ------------------------------------------------------------------
@@ -208,26 +255,29 @@ class World:
     def reset_grid(self, organisms: Iterable[Organism]) -> None:
         """Clear the grid and scatter the given organisms over empty cells."""
         self.occupancy[:, :] = False
+        self.pheromone[:, :] = 0.0
         self.step = 0
         for org in organisms:
             org.x = org.y = -1
             org.last_dx = org.last_dy = 0
             org.age = 0
+            org.alive = True
+            org.progress.clear()
             org.brain.reset()
             self.place(org, *self.random_empty_cell())
 
     def random_empty_cell(self) -> tuple[int, int]:
-        """Pick an unoccupied cell, falling back to a scan if the grid is crowded."""
+        """Pick a free, non-solid cell, falling back to a scan if the grid is crowded."""
         for _ in range(100):
             x = random.randrange(self.width)
             y = random.randrange(self.height)
-            if not self.occupancy[x, y]:
+            if not self.occupancy[x, y] and not self.barriers[x, y]:
                 return x, y
 
-        empty = np.argwhere(~self.occupancy)
-        if len(empty) == 0:
-            raise RuntimeError("no empty cells left: population exceeds grid size")
-        x, y = empty[random.randrange(len(empty))]
+        free = np.argwhere(~(self.occupancy | self.barriers))
+        if len(free) == 0:
+            raise RuntimeError("no free cells left: population exceeds the open grid")
+        x, y = free[random.randrange(len(free))]
         return int(x), int(y)
 
     # ------------------------------------------------------------------
@@ -241,7 +291,16 @@ class World:
         return bool(self.occupancy[x, y])
 
     def can_move_to(self, x: int, y: int) -> bool:
-        return self.in_bounds(x, y) and not self.occupancy[x, y]
+        return self.in_bounds(x, y) and not self.occupancy[x, y] and not self.barriers[x, y]
+
+    def _window_bounds(self, x: int, y: int, radius: int) -> tuple[int, int, int, int]:
+        """The neighbourhood around a cell, clipped to the grid."""
+        return (
+            max(0, x - radius),
+            min(self.width, x + radius + 1),
+            max(0, y - radius),
+            min(self.height, y + radius + 1),
+        )
 
     def population_density(self, x: int, y: int, radius: int) -> float:
         """
@@ -250,13 +309,81 @@ class World:
         The neighbourhood is clipped at the walls, so an organism in a corner
         does not read as lonely just because part of its window is off-grid.
         """
-        window = self.occupancy[
-            max(0, x - radius) : min(self.width, x + radius + 1),
-            max(0, y - radius) : min(self.height, y + radius + 1),
-        ]
+        x0, x1, y0, y1 = self._window_bounds(x, y, radius)
+        window = self.occupancy[x0:x1, y0:y1]
         neighbours = int(window.sum()) - 1  # discount the organism itself
         cells = window.size - 1
         return neighbours / cells if cells > 0 else 0.0
+
+    def neighbour_gradient(self, x: int, y: int, radius: int) -> tuple[float, float]:
+        """
+        Which way the neighbours lie, as a signed pair in [-1, 1].
+
+        (+1, 0) means every neighbour in range is east; (0, 0) means they are
+        balanced, or that there are none. This is the directional information
+        `population_density` throws away.
+        """
+        x0, x1, y0, y1 = self._window_bounds(x, y, radius)
+        window = self.occupancy[x0:x1, y0:y1]
+        total = int(window.sum()) - 1
+        if total <= 0:
+            return 0.0, 0.0
+
+        east = int(self.occupancy[x + 1 : x1, y0:y1].sum())
+        west = int(self.occupancy[x0:x, y0:y1].sum())
+        north = int(self.occupancy[x0:x1, y + 1 : y1].sum())
+        south = int(self.occupancy[x0:x1, y0:y].sum())
+        return _clamp((east - west) / total), _clamp((north - south) / total)
+
+    def nearest_neighbour(self, x: int, y: int, radius: int) -> float:
+        """
+        Closeness of the nearest other organism: 1 when adjacent, 0 when none is in range.
+
+        The empty case is the common one in a sparse world, so it is settled
+        with a single array sum before doing any real work.
+        """
+        x0, x1, y0, y1 = self._window_bounds(x, y, radius)
+        window = self.occupancy[x0:x1, y0:y1]
+        if int(window.sum()) <= 1:
+            return 0.0
+
+        others = np.argwhere(window)
+        dx = others[:, 0] + x0 - x
+        dy = others[:, 1] + y0 - y
+        distances = np.maximum(np.abs(dx), np.abs(dy))  # Chebyshev: one step per ring
+        nearest = int(distances[distances > 0].min())
+        return max(0.0, 1.0 - (nearest - 1) / radius)
+
+    # ------------------------------------------------------------------
+    # The pheromone layer
+    # ------------------------------------------------------------------
+
+    def pheromone_at(self, x: int, y: int) -> float:
+        """Scent on one cell, saturating at 1."""
+        return min(float(self.pheromone[x, y]), 1.0)
+
+    def pheromone_gradient(self, x: int, y: int, radius: int) -> tuple[float, float]:
+        """Which way the scent gets stronger, as a signed pair in [-1, 1]."""
+        x0, x1, y0, y1 = self._window_bounds(x, y, radius)
+        total = float(self.pheromone[x0:x1, y0:y1].sum())
+        if total <= 0.0:
+            return 0.0, 0.0
+
+        east = float(self.pheromone[x + 1 : x1, y0:y1].sum())
+        west = float(self.pheromone[x0:x, y0:y1].sum())
+        north = float(self.pheromone[x0:x1, y + 1 : y1].sum())
+        south = float(self.pheromone[x0:x1, y0:y].sum())
+        # The sub-sums are float32 while the total is not, so rounding can push
+        # a ratio a hair past 1. Clamp, or a sensor quietly breaks its contract.
+        return _clamp((east - west) / total), _clamp((north - south) / total)
+
+    def deposit_pheromone(self, x: int, y: int, amount: float) -> None:
+        """Lay scent on a cell. Deposits accumulate; sensing saturates at 1."""
+        self.pheromone[x, y] += amount
+
+    # ------------------------------------------------------------------
+    # Placing and removing organisms
+    # ------------------------------------------------------------------
 
     def place(self, org: Organism, x: int, y: int) -> None:
         org.x, org.y = x, y
@@ -267,21 +394,33 @@ class World:
         self.occupancy[x, y] = True
         org.x, org.y = x, y
 
+    def kill(self, org: Organism) -> None:
+        """Remove an organism from play. It keeps its position but frees its cell."""
+        if not org.alive:
+            return
+        org.alive = False
+        self.occupancy[org.x, org.y] = False
+
+    def living(self) -> list[Organism]:
+        return [org for org in self.organisms if org.alive]
+
     # ------------------------------------------------------------------
     # Running time
     # ------------------------------------------------------------------
 
     def update_organisms(self) -> None:
         """
-        Advance every organism by one timestep.
+        Advance every living organism by one timestep, then age the world.
 
         The order is shuffled each step so that no organism gets a permanent
         advantage in claiming contested cells.
         """
-        order = list(self.organisms)
+        order = self.living()
         random.shuffle(order)
         for org in order:
             org.act(self)
+
+        self.pheromone *= self.config.pheromone_decay
         self.step += 1
 
     def run_generation(self, on_step: Callable[[World, int], None] | None = None) -> int:
@@ -291,10 +430,16 @@ class World:
         `on_step` is called with (world, step) after each timestep, which is how
         `execute.py` draws the animation without the world knowing about it.
 
-        Returns the number of organisms that met the survival criterion.
+        Returns the number of organisms that met the objective.
         """
+        self.objective.begin_generation(self)
+
         for step in range(self.config.steps_per_generation):
             self.update_organisms()
+            self.objective.advance(self)
+            for org in self.organisms:
+                if org.alive:
+                    self.objective.observe(org, self)
             if on_step is not None:
                 on_step(self, step)
 
@@ -304,8 +449,8 @@ class World:
         return len(survivors)
 
     def select_survivors(self) -> list[Organism]:
-        """The organisms that satisfy the survival criterion. Everyone else dies."""
-        return [org for org in self.organisms if self.criterion(org.x, org.y, self)]
+        """The organisms that satisfy the objective. Everyone else dies."""
+        return [org for org in self.organisms if org.alive and self.objective.survives(org, self)]
 
     def reproduce_organisms(self, survivors: list[Organism]) -> None:
         """
@@ -324,63 +469,21 @@ class World:
         self.reset_grid(children)
 
     def positions(self) -> tuple[npt.NDArray[np.int_], npt.NDArray[np.int_]]:
-        """Current x and y arrays for the whole population, for plotting."""
-        count = len(self.organisms)
-        xs = np.fromiter((org.x for org in self.organisms), dtype=int, count=count)
-        ys = np.fromiter((org.y for org in self.organisms), dtype=int, count=count)
+        """Current x and y arrays for the living population, for plotting."""
+        alive = self.living()
+        xs = np.fromiter((org.x for org in alive), dtype=int, count=len(alive))
+        ys = np.fromiter((org.y for org in alive), dtype=int, count=len(alive))
         return xs, ys
 
-    def survival_zone_mask(self) -> npt.NDArray[np.bool_]:
-        """
-        A boolean grid of the cells that count as survivable.
 
-        Rather than hard-coding a shape per criterion, this asks the criterion
-        itself about every cell, so any new criterion draws itself correctly.
-        """
-        return np.array(
-            [[self.criterion(x, y, self) for y in range(self.height)] for x in range(self.width)],
-            dtype=bool,
-        )
-
-
-# ----------------------------------------------------------------------------
-# Survival criteria
-# ----------------------------------------------------------------------------
-#
-# A criterion takes a position and the world, and returns True if an organism
-# ending the generation there gets to reproduce. This is the entire selection
-# pressure -- swapping the criterion is the main dial for changing what evolves.
-
-
-def left_edge(x: int, y: int, world: World) -> bool:
-    """Survive by ending the generation in a band along the west wall."""
-    return x < world.width * world.config.survival_zone_fraction
-
-
-def right_edge(x: int, y: int, world: World) -> bool:
-    """Survive by ending the generation in a band along the east wall."""
-    return x >= world.width * (1 - world.config.survival_zone_fraction)
-
-
-def centre(x: int, y: int, world: World) -> bool:
-    """Survive by ending the generation inside a circle at the middle of the world."""
-    radius = world.width * world.config.survival_zone_fraction
-    dx = x - world.width / 2
-    dy = y - world.height / 2
-    return dx * dx + dy * dy <= radius * radius
-
-
-def corners(x: int, y: int, world: World) -> bool:
-    """Survive by ending the generation in any of the four corners."""
-    span = world.width * world.config.survival_zone_fraction
-    near_x = x < span or x >= world.width - span
-    near_y = y < span or y >= world.height - span
-    return near_x and near_y
-
-
-CRITERIA: Final[dict[str, Criterion]] = {
-    "left": left_edge,
-    "right": right_edge,
-    "centre": centre,
-    "corners": corners,
-}
+def _resolve_objective(objective: Objective | str | None) -> Objective:
+    """Accept an objective, the name of one, or nothing at all."""
+    if objective is None:
+        return OBJECTIVES["left"]
+    if isinstance(objective, str):
+        try:
+            return OBJECTIVES[objective]
+        except KeyError:
+            known = ", ".join(OBJECTIVES)
+            raise ValueError(f"unknown objective {objective!r}; try one of: {known}") from None
+    return objective

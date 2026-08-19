@@ -18,10 +18,24 @@ class Settings:
     width: int = 100
     height: int = 100
 
+    barrier_layout: str = "none"
+    """Which obstacle layout to build into the world. See `barriers.LAYOUTS`."""
+
     # Population and timing
     n_organisms: int = 250
     steps_per_generation: int = 200
     n_generations: int = 100
+
+    # Perception
+    sense_radius: int = 6
+    """How far an organism can feel neighbours and smell pheromone."""
+
+    # The pheromone layer
+    pheromone_decay: float = 0.92
+    """Fraction of the pheromone on a cell that survives each timestep."""
+
+    pheromone_deposit: float = 0.5
+    """How much an organism lays down at full emission strength."""
 
     # Brain structure
     n_inner_neurons: int = 4
@@ -42,7 +56,16 @@ class Settings:
 
     # Selection
     survival_zone_fraction: float = 0.2
-    """Fraction of the world's width that the survival criteria treat as safe."""
+    """Fraction of the world's width that the zone objectives treat as safe."""
+
+    stay_fraction: float = 0.5
+    """For `stay`: the fraction of the generation that must be spent in the zone."""
+
+    hazard_radius: float = 12.0
+    """For `hazard`: radius of the roaming danger circle."""
+
+    hazard_period: int = 100
+    """For `hazard`: timesteps the hazard takes to complete one circuit."""
 
 
 DEFAULT = Settings()

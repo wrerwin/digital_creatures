@@ -1,9 +1,11 @@
 """
 Run the simulation.
 
-    uv run python execute.py                      # survive by reaching the west wall
-    uv run python execute.py --criterion corners  # a different selection pressure
-    uv run python execute.py --watch 0            # no animation, just the numbers
+    uv run python execute.py                              # reach the west wall
+    uv run python execute.py --objective stay             # and hold position there
+    uv run python execute.py --barriers slalom            # make it work for it
+    uv run python execute.py --compare left,stay,corners  # race objectives, headless
+    uv run python execute.py --watch 0                    # no animation, just numbers
 
 Generation 0 is random noise. Watch the survival percentage climb.
 """
@@ -14,11 +16,15 @@ import argparse
 import random
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from organism import CRITERIA, World
+import barriers
+import inspect_utils
+from objectives import OBJECTIVES
+from organism import Organism, World
 from settings import Settings
 
 if TYPE_CHECKING:
@@ -33,10 +39,16 @@ def parse_args() -> argparse.Namespace:
     )
     defaults = Settings()
     parser.add_argument(
-        "--criterion",
-        choices=sorted(CRITERIA),
+        "--objective",
+        choices=list(OBJECTIVES),
         default="left",
-        help="which survival criterion selects who reproduces",
+        help="what a creature has to do to earn the right to reproduce",
+    )
+    parser.add_argument(
+        "--barriers",
+        choices=sorted(barriers.LAYOUTS),
+        default=defaults.barrier_layout,
+        help="obstacle layout built into the world",
     )
     parser.add_argument("--generations", type=int, default=defaults.n_generations)
     parser.add_argument("--population", type=int, default=defaults.n_organisms)
@@ -59,42 +71,114 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="seed the random number generators for a repeatable run",
     )
+    parser.add_argument(
+        "--compare",
+        metavar="A,B,C",
+        default=None,
+        help="run several objectives headless and plot their survival curves together",
+    )
+    parser.add_argument(
+        "--save-genome",
+        metavar="PATH",
+        default=None,
+        help="write a final creature's genome to a JSON file",
+    )
+    parser.add_argument(
+        "--load-genome",
+        metavar="PATH",
+        default=None,
+        help="seed the whole starting population from a saved genome",
+    )
+    parser.add_argument(
+        "--draw-brain",
+        action="store_true",
+        help="show a wiring diagram of one final creature",
+    )
     return parser.parse_args()
 
 
-class Animator:
-    """Live scatter plot of the population, with the survival zone shaded."""
+def build_config(args: argparse.Namespace) -> Settings:
+    return replace(
+        Settings(),
+        n_organisms=args.population,
+        steps_per_generation=args.steps,
+        n_generations=args.generations,
+        barrier_layout=args.barriers,
+    )
 
-    def __init__(self, world: World, criterion_name: str) -> None:
+
+class Animator:
+    """Live view of the population, its obstacles, its scent trails and its goal."""
+
+    def __init__(self, world: World, title: str) -> None:
         import matplotlib.pyplot as plt
 
         self.plt = plt
-        self.criterion_name = criterion_name
+        self.title = title
 
         self.figure: Figure
         self.axes: Axes
-        self.figure, self.axes = plt.subplots(figsize=(6, 6))
+        self.figure, self.axes = plt.subplots(figsize=(6.5, 6.5))
+        extent = (0, world.width, 0, world.height)
 
-        # imshow indexes [row, column] = [y, x], so transpose the [x, y] mask.
-        self.axes.imshow(
-            world.survival_zone_mask().T,
+        # imshow indexes [row, column] = [y, x], so every mask is transposed.
+        self.zone_images = []
+        for shading in world.objective.zones(world):
+            self.zone_images.append(
+                self.axes.imshow(
+                    shading.mask.T,
+                    origin="lower",
+                    cmap=shading.colour,
+                    alpha=0.3,
+                    extent=extent,
+                    vmin=0,
+                    vmax=1,
+                    zorder=0,
+                )
+            )
+
+        self.pheromone_image = self.axes.imshow(
+            world.pheromone.T,
             origin="lower",
-            cmap="Greens",
-            alpha=0.25,
-            extent=(0, world.width, 0, world.height),
+            cmap="BuPu",
+            alpha=0.55,
+            extent=extent,
+            vmin=0,
+            vmax=1,
+            zorder=1,
         )
-        self.scatter = self.axes.scatter([], [], s=6)
+        # Solid cells are drawn opaque, empty ones fully transparent.
+        self.axes.imshow(
+            np.ma.masked_where(~world.barriers.T, world.barriers.T),
+            origin="lower",
+            cmap="Greys",
+            alpha=0.85,
+            extent=extent,
+            vmin=0,
+            vmax=1,
+            zorder=2,
+        )
+
+        self.scatter = self.axes.scatter([], [], s=7, zorder=3)
         self.axes.set_xlim(0, world.width)
         self.axes.set_ylim(0, world.height)
+        self.dynamic_zones = world.objective.dynamic
 
         plt.ion()
         plt.show(block=False)
 
     def draw(self, world: World, step: int) -> None:
         xs, ys = world.positions()
-        self.scatter.set_offsets(np.column_stack((xs, ys)))
+        self.scatter.set_offsets(np.column_stack((xs, ys)) if len(xs) else np.empty((0, 2)))
+        self.pheromone_image.set_data(np.clip(world.pheromone.T, 0, 1))
+
+        if self.dynamic_zones:
+            shadings = world.objective.zones(world)
+            for image, shading in zip(self.zone_images, shadings, strict=False):
+                image.set_data(shading.mask.T)
+
         self.axes.set_title(
-            f"{self.criterion_name} criterion | generation {world.generation} | step {step}"
+            f"{self.title} | generation {world.generation} | step {step} | alive {len(xs)}"
         )
         self.figure.canvas.draw_idle()
         self.plt.pause(0.001)
@@ -104,26 +188,28 @@ class Animator:
         self.plt.close(self.figure)
 
 
-def main() -> None:
-    args = parse_args()
+def seed_population(world: World, path: str) -> None:
+    """Replace every starting genome with one loaded from disk."""
+    genome = inspect_utils.load_genome(path)
+    world.organisms = [Organism(world.config, genome=genome) for _ in range(world.n_organisms)]
+    world.reset_grid(world.organisms)
+    print(f"seeded {world.n_organisms} organisms from {path}")
 
-    if args.seed is not None:
-        random.seed(args.seed)
-        np.random.seed(args.seed)
 
-    config = replace(
-        Settings(),
-        n_organisms=args.population,
-        steps_per_generation=args.steps,
-        n_generations=args.generations,
-    )
-    world = World(config=config, criterion=CRITERIA[args.criterion])
+def run(args: argparse.Namespace) -> World:
+    """Run one objective, animating as configured, and return the finished world."""
+    config = build_config(args)
+    world = World(config=config, objective=args.objective)
 
-    animator = Animator(world, args.criterion) if args.watch else None
+    if args.load_genome:
+        seed_population(world, args.load_genome)
+
+    title = args.objective if args.barriers == "none" else f"{args.objective} / {args.barriers}"
+    animator = Animator(world, title) if args.watch else None
 
     print(
-        f"{config.n_organisms} organisms, {config.steps_per_generation} steps "
-        f'per generation, "{args.criterion}" survival criterion'
+        f"{config.n_organisms} organisms, {config.steps_per_generation} steps per generation, "
+        f'"{args.objective}" objective, "{args.barriers}" barriers'
     )
 
     started = time.monotonic()
@@ -145,18 +231,71 @@ def main() -> None:
         if animator is not None:
             animator.close()
 
-    show_example_brain(world)
+    return world
 
 
-def show_example_brain(world: World) -> None:
-    """Print one organism's wiring, so the evolved behaviour can be read back."""
+def compare(args: argparse.Namespace) -> None:
+    """Race several objectives against each other and plot the result."""
+    import matplotlib.pyplot as plt
+
+    names = [name.strip() for name in args.compare.split(",") if name.strip()]
+    unknown = [name for name in names if name not in OBJECTIVES]
+    if unknown:
+        raise SystemExit(f"unknown objective(s): {', '.join(unknown)}")
+
+    config = build_config(args)
+    _, axes = plt.subplots(figsize=(8, 5))
+
+    for name in names:
+        world = World(config=config, objective=name)
+        started = time.monotonic()
+        curve = [world.run_generation() / config.n_organisms for _ in range(config.n_generations)]
+        axes.plot(curve, label=name)
+        print(f"{name:>18}   final {curve[-1]:6.1%}   {time.monotonic() - started:6.1f}s")
+
+    axes.set_xlabel("generation")
+    axes.set_ylabel("fraction surviving")
+    axes.set_ylim(0, 1)
+    axes.set_title(f"objectives compared ({args.barriers} barriers)")
+    axes.legend()
+    plt.show()
+
+
+def report(world: World, args: argparse.Namespace) -> None:
+    """Print, save and optionally draw one creature from the final generation."""
     if not world.organisms:
         return
+
     example = world.organisms[0]
     consulted = ", ".join(str(s) for s in example.brain.needed_sensors) or "none"
     print("\nwiring of one organism from the final generation:")
     print(example.brain.describe())
     print(f"\nsenses it actually consults: {consulted}")
+
+    if args.save_genome:
+        path = inspect_utils.save_genome(example.genome, world.config, Path(args.save_genome))
+        print(f"genome written to {path}")
+
+    if args.draw_brain:
+        import matplotlib.pyplot as plt
+
+        inspect_utils.draw_brain(example.brain, world.config)
+        plt.show()
+
+
+def main() -> None:
+    args = parse_args()
+
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+
+    if args.compare:
+        compare(args)
+        return
+
+    world = run(args)
+    report(world, args)
 
 
 if __name__ == "__main__":
