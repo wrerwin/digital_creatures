@@ -34,21 +34,32 @@ async function init() {
 
   fillSelect(el("objective"), options.objectives, options.defaults.objective);
   fillSelect(el("barriers"), options.barriers, options.defaults.barriers);
+  fillSelect(el("reproduction"), options.reproduction, options.defaults.reproduction);
 
-  el("population").value = options.defaults.population;
-  el("steps").value = options.defaults.steps;
-  el("generations").value = options.defaults.generations;
-  el("n_genes").value = options.defaults.n_genes;
-  el("n_inner_neurons").value = options.defaults.n_inner_neurons;
-  el("mutation_rate").value = options.defaults.mutation_rate;
+  const numbers = [
+    "population", "steps", "generations", "n_genes", "n_inner_neurons",
+    "mutation_rate", "initial_energy", "sense_cost", "survival_zone_fraction",
+    "zone_shrink", "offspring_per_survivor", "carrying_capacity", "mating_radius",
+  ];
+  for (const name of numbers) {
+    const key = { zone_shrink: "zone_shrink" }[name] || name;
+    if (options.defaults[key] !== undefined) el(name).value = options.defaults[key];
+  }
+  el("energy_enabled").checked = options.defaults.energy_enabled;
 
   buildCapabilityList("sensors", options.sensors, true);
   buildCapabilityList("actions", options.actions, false);
 
   el("mutation_rate").addEventListener("input", showMutationRate);
   el("stride").addEventListener("input", showStride);
+  el("survival_zone_fraction").addEventListener("input", showZone);
+  el("zone_shrink").addEventListener("input", showShrink);
+  el("reproduction").addEventListener("change", showMatingField);
   showMutationRate();
   showStride();
+  showZone();
+  showShrink();
+  showMatingField();
 
   el("start").addEventListener("click", start);
   el("stop").addEventListener("click", stop);
@@ -172,6 +183,22 @@ function showStride() {
   el("stride_label").textContent = stride === 1 ? "(every step)" : `(${stride} steps per frame)`;
 }
 
+function showZone() {
+  el("zone_label").textContent = `(${Math.round(el("survival_zone_fraction").value * 100)}% of the world)`;
+}
+
+function showShrink() {
+  const shrink = Number(el("zone_shrink").value);
+  el("shrink_label").textContent =
+    shrink === 0 ? "(fixed target)" : `(${(shrink * 100).toFixed(1)}% smaller each generation)`;
+}
+
+// Mating radius only means anything when survivors have to find each other.
+function showMatingField() {
+  el("mating_radius_field").style.display =
+    el("reproduction").value === "sexual" ? "" : "none";
+}
+
 /* ------------------------------------------------------------- websocket */
 
 function connect() {
@@ -208,12 +235,21 @@ function start() {
       action: "start",
       objective: el("objective").value,
       barriers: el("barriers").value,
+      reproduction: el("reproduction").value,
       population: Number(el("population").value),
       steps: Number(el("steps").value),
       generations: Number(el("generations").value),
       n_genes: Number(el("n_genes").value),
       n_inner_neurons: Number(el("n_inner_neurons").value),
       mutation_rate: Number(el("mutation_rate").value),
+      energy_enabled: el("energy_enabled").checked,
+      initial_energy: Number(el("initial_energy").value),
+      sense_cost: Number(el("sense_cost").value),
+      survival_zone_fraction: Number(el("survival_zone_fraction").value),
+      zone_shrink: Number(el("zone_shrink").value),
+      offspring_per_survivor: Number(el("offspring_per_survivor").value),
+      carrying_capacity: Number(el("carrying_capacity").value),
+      mating_radius: Number(el("mating_radius").value),
       stride: Number(el("stride").value),
       seed: el("seed").value,
       sensors,
@@ -243,13 +279,20 @@ function handle(message) {
     case "generation":
       el("gen-value").textContent = message.generation;
       el("survivors-value").textContent =
-        `${message.survivors} / ${message.population}`;
+        `${message.survivors} / ${message.previous_population}`;
+      el("pop-value").textContent = message.population;
       el("brain").textContent = message.brain || "(no creatures)";
-      drawChart(message.history);
+      drawChart(message.history, message.populations, message.capacity);
+      drawExpression(message.expression, message.zone_fraction);
       break;
     case "done":
       setRunning(false);
-      setStatus("Finished.");
+      setStatus(
+        message.extinct
+          ? "Extinct — nobody left to breed."
+          : "Finished.",
+        Boolean(message.extinct),
+      );
       break;
     case "stopped":
       setRunning(false);
@@ -357,15 +400,18 @@ function resetChart() {
   chartCtx.clearRect(0, 0, chart.width, chart.height);
 }
 
-function drawChart(history) {
+function drawChart(history, populations, capacity) {
   const { width, height } = chart;
-  const pad = 22;
+  const pad = 26;
   chartCtx.clearRect(0, 0, width, height);
+
+  const plotHeight = height - pad * 1.5;
+  const toY = (fraction) => height - pad - fraction * plotHeight;
 
   chartCtx.strokeStyle = "#2c2f3d";
   chartCtx.lineWidth = 1;
   for (const fraction of [0, 0.5, 1]) {
-    const y = height - pad - fraction * (height - pad * 1.5);
+    const y = toY(fraction);
     chartCtx.beginPath();
     chartCtx.moveTo(pad, y);
     chartCtx.lineTo(width - 6, y);
@@ -375,19 +421,84 @@ function drawChart(history) {
     chartCtx.fillText(`${Math.round(fraction * 100)}%`, 2, y + 3);
   }
 
-  if (!history.length) return;
+  // The replacement line: survive at less than this and the population shrinks.
+  const replacement = 1 / Number(el("offspring_per_survivor").value || 2);
+  if (replacement > 0 && replacement <= 1) {
+    chartCtx.strokeStyle = "#7a5c2e";
+    chartCtx.setLineDash([4, 4]);
+    chartCtx.beginPath();
+    chartCtx.moveTo(pad, toY(replacement));
+    chartCtx.lineTo(width - 6, toY(replacement));
+    chartCtx.stroke();
+    chartCtx.setLineDash([]);
+  }
 
+  if (!history.length) return;
   const span = Math.max(history.length - 1, 1);
-  chartCtx.strokeStyle = "#6ea8fe";
-  chartCtx.lineWidth = 2;
-  chartCtx.beginPath();
-  history.forEach((value, index) => {
-    const x = pad + (index / span) * (width - pad - 6);
-    const y = height - pad - value * (height - pad * 1.5);
-    if (index === 0) chartCtx.moveTo(x, y);
-    else chartCtx.lineTo(x, y);
+
+  const line = (values, colour, scale) => {
+    chartCtx.strokeStyle = colour;
+    chartCtx.lineWidth = 2;
+    chartCtx.beginPath();
+    values.forEach((value, index) => {
+      const x = pad + (index / span) * (width - pad - 6);
+      const y = toY(Math.min(1, value * scale));
+      if (index === 0) chartCtx.moveTo(x, y);
+      else chartCtx.lineTo(x, y);
+    });
+    chartCtx.stroke();
+  };
+
+  if (populations && capacity) line(populations, "#4ec9a0", 1 / capacity);
+  line(history, "#6ea8fe", 1);
+}
+
+/*
+ * Gene expression: what share of the population wires each capability at all.
+ * A sense that falls to zero has been actively selected away; one that climbs
+ * to 100% has become load-bearing.
+ */
+function drawExpression(expression, zoneFraction) {
+  if (!expression) return;
+
+  renderBars(el("sensor-bars"), expression.sensors, "sensor");
+  renderBars(el("action-bars"), expression.actions, "action");
+
+  const lineages = expression.lineages;
+  el("lineage-value").textContent = lineages.alive;
+
+  el("expression-summary").textContent =
+    `${expression.population} creatures · ` +
+    `${expression.mean_senses_used.toFixed(1)} senses wired on average · ` +
+    `upkeep ${expression.mean_upkeep.toFixed(2)}/step · ` +
+    `${lineages.alive} lineages left, biggest holds ` +
+    `${Math.round(lineages.dominant_share * 100)}% · ` +
+    `zone ${(zoneFraction * 100).toFixed(1)}%`;
+}
+
+function renderBars(host, entries, kind) {
+  // Rebuild only when the set of labels changes; otherwise update in place so
+  // the CSS width transition animates instead of flickering.
+  if (host.children.length !== entries.length) {
+    host.innerHTML = "";
+    for (const entry of entries) {
+      const row = document.createElement("div");
+      row.className = `bar-row ${kind}`;
+      row.innerHTML =
+        `<span class="bar-label"></span>` +
+        `<span class="bar-track"><span class="bar-fill"></span></span>` +
+        `<span class="bar-value"></span>`;
+      host.append(row);
+    }
+  }
+
+  entries.forEach((entry, index) => {
+    const row = host.children[index];
+    row.classList.toggle("dropped", entry.share === 0);
+    row.querySelector(".bar-label").textContent = entry.label;
+    row.querySelector(".bar-fill").style.width = `${entry.share * 100}%`;
+    row.querySelector(".bar-value").textContent = `${Math.round(entry.share * 100)}%`;
   });
-  chartCtx.stroke();
 }
 
 /* ---------------------------------------------------------------- status */

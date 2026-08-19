@@ -54,17 +54,17 @@ class Shading:
 
 def left_edge(x: int, y: int, world: World) -> bool:
     """A band along the west wall."""
-    return x < world.width * world.config.survival_zone_fraction
+    return x < world.width * world.zone_fraction
 
 
 def right_edge(x: int, y: int, world: World) -> bool:
     """A band along the east wall."""
-    return x >= world.width * (1 - world.config.survival_zone_fraction)
+    return x >= world.width * (1 - world.zone_fraction)
 
 
 def centre(x: int, y: int, world: World) -> bool:
     """A circle at the middle of the world."""
-    radius = world.width * world.config.survival_zone_fraction
+    radius = world.width * world.zone_fraction
     dx = x - world.width / 2
     dy = y - world.height / 2
     return dx * dx + dy * dy <= radius * radius
@@ -72,17 +72,17 @@ def centre(x: int, y: int, world: World) -> bool:
 
 def top_edge(x: int, y: int, world: World) -> bool:
     """A band along the north wall."""
-    return y >= world.height * (1 - world.config.survival_zone_fraction)
+    return y >= world.height * (1 - world.zone_fraction)
 
 
 def bottom_edge(x: int, y: int, world: World) -> bool:
     """A band along the south wall."""
-    return y < world.height * world.config.survival_zone_fraction
+    return y < world.height * world.zone_fraction
 
 
 def corners(x: int, y: int, world: World) -> bool:
     """All four corners."""
-    span = world.width * world.config.survival_zone_fraction
+    span = world.width * world.zone_fraction
     near_x = x < span or x >= world.width - span
     near_y = y < span or y >= world.height - span
     return near_x and near_y

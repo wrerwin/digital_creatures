@@ -29,6 +29,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import barriers
+import population_stats
+import reproduction
 from capability_utils import Action, Sensor
 from objectives import OBJECTIVES
 from organism import World
@@ -59,6 +61,7 @@ async def options() -> dict[str, Any]:
     return {
         "objectives": list(OBJECTIVES),
         "barriers": sorted(barriers.LAYOUTS),
+        "reproduction": list(reproduction.STRATEGIES),
         "sensors": [
             {"value": int(sensor), "label": str(sensor), "group": _sensor_group(sensor)}
             for sensor in Sensor
@@ -67,12 +70,21 @@ async def options() -> dict[str, Any]:
         "defaults": {
             "objective": "left",
             "barriers": defaults.barrier_layout,
+            "reproduction": defaults.reproduction,
             "population": defaults.n_organisms,
             "steps": defaults.steps_per_generation,
             "generations": defaults.n_generations,
             "mutation_rate": defaults.point_mutation_rate,
             "n_genes": defaults.n_genes,
             "n_inner_neurons": defaults.n_inner_neurons,
+            "energy_enabled": defaults.energy_enabled,
+            "initial_energy": defaults.initial_energy,
+            "sense_cost": defaults.sense_cost,
+            "survival_zone_fraction": defaults.survival_zone_fraction,
+            "zone_shrink": defaults.zone_shrink_per_generation,
+            "offspring_per_survivor": defaults.offspring_per_survivor,
+            "carrying_capacity": defaults.carrying_capacity,
+            "mating_radius": defaults.mating_radius,
         },
     }
 
@@ -122,6 +134,10 @@ def build_settings(payload: dict[str, Any]) -> Settings:
     if layout not in barriers.LAYOUTS:
         raise ValueError(f"unknown barrier layout {layout!r}")
 
+    strategy = payload.get("reproduction", defaults.reproduction)
+    if strategy not in reproduction.STRATEGIES:
+        raise ValueError(f"unknown reproduction strategy {strategy!r}")
+
     config = replace(
         defaults,
         n_organisms=_clamp_int(payload.get("population"), 2, 2000, defaults.n_organisms),
@@ -130,9 +146,27 @@ def build_settings(payload: dict[str, Any]) -> Settings:
         n_genes=_clamp_int(payload.get("n_genes"), 1, 200, defaults.n_genes),
         n_inner_neurons=_clamp_int(payload.get("n_inner_neurons"), 1, 32, 4),
         barrier_layout=layout,
+        reproduction=strategy,
         point_mutation_rate=_clamp_float(
             payload.get("mutation_rate"), 0.0, 1.0, defaults.point_mutation_rate
         ),
+        energy_enabled=bool(payload.get("energy_enabled", defaults.energy_enabled)),
+        initial_energy=_clamp_float(
+            payload.get("initial_energy"), 1.0, 10_000.0, defaults.initial_energy
+        ),
+        sense_cost=_clamp_float(payload.get("sense_cost"), 0.0, 5.0, defaults.sense_cost),
+        survival_zone_fraction=_clamp_float(
+            payload.get("survival_zone_fraction"), 0.01, 0.9, defaults.survival_zone_fraction
+        ),
+        zone_shrink_per_generation=_clamp_float(payload.get("zone_shrink"), 0.0, 0.5, 0.0),
+        offspring_per_survivor=_clamp_float(
+            payload.get("offspring_per_survivor"), 0.1, 20.0, defaults.offspring_per_survivor
+        ),
+        # Capped below the grid size, or a generation could have nowhere to stand.
+        carrying_capacity=_clamp_int(
+            payload.get("carrying_capacity"), 2, 5000, defaults.carrying_capacity
+        ),
+        mating_radius=_clamp_int(payload.get("mating_radius"), 1, 200, defaults.mating_radius),
     )
     return config.with_capabilities(sensors, actions)
 
@@ -177,6 +211,8 @@ def opening_frame(world: World, config: Settings) -> dict[str, Any]:
         "generations": config.n_generations,
         "steps": config.steps_per_generation,
         "population": config.n_organisms,
+        "capacity": config.carrying_capacity,
+        "reproduction": config.reproduction,
         "barriers": _mask_to_base64(world.barriers),
         "dynamic_zones": world.objective.dynamic,
         "zones": [
@@ -224,8 +260,10 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
     # choppier run; the UI exposes it as a speed control.
     stride = _clamp_int(payload.get("stride"), 1, 200, 1)
     history: list[float] = []
+    populations: list[int] = []
 
     for _ in range(config.n_generations):
+        before = world.population
         generation = world.iter_generation()
         pending = 0
         while True:
@@ -243,20 +281,30 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
                 # promptly rather than at the end of the generation.
                 await asyncio.sleep(0)
 
-        history.append(survivors / config.n_organisms)
+        history.append(survivors / max(before, 1))
+        populations.append(world.population)
         await websocket.send_json(
             {
                 "type": "generation",
                 "generation": world.generation,
                 "survivors": survivors,
-                "population": config.n_organisms,
+                "population": world.population,
+                "previous_population": before,
+                "capacity": config.carrying_capacity,
+                "zone_fraction": world.zone_fraction,
                 "history": history,
+                "populations": populations,
+                "expression": population_stats.expression(world),
                 "brain": world.organisms[0].brain.describe() if world.organisms else "",
             }
         )
         await asyncio.sleep(0)
 
-    await websocket.send_json({"type": "done"})
+        if world.extinct:
+            await websocket.send_json({"type": "done", "extinct": True})
+            return
+
+    await websocket.send_json({"type": "done", "extinct": False})
 
 
 @app.websocket("/ws")

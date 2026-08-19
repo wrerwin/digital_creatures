@@ -41,8 +41,35 @@ browser with no front-end change.
 ## How it works
 
 A generation runs for a fixed number of timesteps. At the end, an **objective**
-decides who reproduces. Survivors are cloned with mutation until the population
-is full again, the grid is cleared, and the next generation starts.
+decides who reproduces. Survivors leave offspring, the grid is cleared, and the
+next generation starts — with however many creatures were earned.
+
+## Staying alive is meant to be hard
+
+Three things push back, and together they make the population walk an edge
+rather than settle:
+
+**Metabolism.** Creatures burn energy: a base cost each timestep, more when
+they move, and — the important one — upkeep for *every distinct sense the brain
+is wired to*. A creature reading twelve senses pays for twelve senses whether
+or not they earn their keep, so more capability stops being strictly better.
+At the default cost a population sheds roughly two of its nine wired senses
+over thirty generations. Run out of energy and you starve mid-generation.
+
+**A population that can die.** Nothing is refilled to a fixed size. Each
+breeding survivor leaves `offspring_per_survivor` young, capped by the carrying
+capacity. At the default of 2.0 the population holds steady at *exactly* 50%
+survival — so that line, drawn on the survival chart, is the edge. Below it the
+population shrinks, and it can reach zero, which ends the run.
+
+**A shrinking target.** Optionally the survival zone contracts each generation,
+so a solution that worked at generation 10 stops working by 50. Worth knowing:
+this ratchets the early climb hard, but a population already at carrying
+capacity tends to absorb it.
+
+The defaults are deliberately mean. A measured run fell from 250 creatures to
+18 before recovering; under sexual reproduction, seeds exist that die out
+entirely in three generations.
 
 Each organism has a **genome**: a fixed-length tuple of genes, where every gene
 is one connection.
@@ -107,6 +134,40 @@ objectives are the first that cannot be solved by a fixed heading — a creature
 has to change its mind partway through, which means routing `age` or a
 recurrent inner neuron into its movement.
 
+## Reproduction
+
+`--reproduction asexual|sexual`, or the dropdown in the UI.
+
+**Asexual** clones a survivor with mutation. Any survivor breeds, wherever it
+ended up, and mutation is the only source of new variation.
+
+**Sexual** makes survivors *find each other*. Two survivors within
+`mating_radius` pair up — greedily and monogamously, nearest first — and their
+genomes cross over uniformly, every connection coming from one parent or the
+other. A survivor with nobody in range leaves nothing at all.
+
+That second clause is the whole point: reaching the zone stops being enough,
+because arriving alone is the same as not arriving. It puts real pressure on
+the neighbour senses, and it is much harsher — the same seed that cruises
+asexually can crash to a handful of creatures, or die out.
+
+Each child takes one parent's lineage at random, so a line can vanish even
+while its genes survive in somebody else's descendants.
+
+## Watching the population
+
+Reading one brain tells you what one creature does. The **gene expression**
+view tells you what evolution has decided: for every sense and action, the
+share of the population that wires it at all.
+
+It is the most informative thing in the UI. A sense at 100% has become
+load-bearing; one that falls to 0% has been actively selected away. In one
+measured run against the `left` objective, `x_position` went to 100% while
+`y_position` and `population_density` were driven to zero — and 200 founding
+lineages collapsed to 2.
+
+`--stats` prints the same picture in the terminal.
+
 ## Obstacles
 
 `--barriers none|wall|slalom|pillars|funnel`. Barriers are solid cells that
@@ -117,10 +178,12 @@ from a complete solution into one that strands a creature in a dead end.
 
 ```bash
 uv run python execute.py --objective stay --barriers slalom
-uv run python execute.py --compare left,stay,corners,hazard   # race them, headless
-uv run python execute.py --objective hazard --watch 1         # watch things die
-uv run python execute.py --watch 0                            # numbers only, fastest
-uv run python execute.py --seed 42                            # repeatable run
+uv run python execute.py --reproduction sexual --stats   # mates must be found
+uv run python execute.py --zone-shrink 0.02              # ratchet the difficulty
+uv run python execute.py --no-metabolism                 # brains cost nothing
+uv run python execute.py --compare left,stay,corners     # race them, headless
+uv run python execute.py --watch 0                       # numbers only, fastest
+uv run python execute.py --seed 42                       # repeatable run
 ```
 
 Keep a creature you like, and start a later run from it:
@@ -165,20 +228,22 @@ world = World(config=config, objective="there-and-back")
 | `capability_utils.py` | the `Sensor` and `Action` enums — what a creature can perceive and do |
 | `brain_utils.py` | genes, mutation, and the network a genome builds |
 | `organism.py` | `Organism`, `World`, the grid layers, and the generational cycle |
-| `objectives.py` | what it takes to reproduce |
+| `objectives.py` | what it takes to earn the right to reproduce |
+| `reproduction.py` | asexual and sexual strategies, and population dynamics |
+| `population_stats.py` | gene expression and lineages across the whole population |
 | `barriers.py` | obstacle layouts |
 | `inspect_utils.py` | saving, loading and drawing creatures |
 | `execute.py` | the terminal runner, live animation and comparison mode |
 | `server.py` | the web UI's backend, streaming runs over a websocket |
 | `static/` | the browser front end |
-| `test_simulation.py`, `test_server.py` | invariant checks — run `uv run pytest` |
+| `test_simulation.py`, `test_evolution.py`, `test_server.py` | invariant checks — run `uv run pytest` |
 | `sandbox.ipynb` | design notes and a scratchpad for poking at individual creatures |
 
 ## Development
 
 ```bash
 uv sync                 # create the environment
-uv run pytest           # 90 invariant checks
+uv run pytest           # 125 invariant checks
 uv run ruff check .     # lint
 uv run ruff format .    # format
 ```
@@ -187,12 +252,16 @@ uv run ruff format .    # format
 
 ## Known limits
 
-Reproduction is asexual — mutation is the only source of variation, with no
-crossover between survivors.
-
 Selection is all-or-nothing: an objective either passes a creature or does not,
 with no partial credit. Objectives that almost nobody can satisfy early on
 therefore have no gradient to climb, and the population reseeds from random
 genomes whenever a generation produces zero survivors. Conjunctive goals need
 their two halves chosen so that some creatures get there by luck in the first
 few generations.
+
+Mutation is still only point mutation. Genomes cannot grow, shrink, or
+duplicate a gene, so brain size is fixed for a whole run.
+
+The shrinking zone ratchets the early climb but does not destabilise a
+population that has already reached carrying capacity — measured over 100
+generations, a zone contracting from 12% to 4.4% did not dent it.

@@ -25,6 +25,7 @@ import numpy as np
 
 import barriers as barrier_layouts
 import brain_utils
+import reproduction
 import settings
 from capability_utils import Action, Sensor, read_sensors
 from objectives import OBJECTIVES, Objective
@@ -59,11 +60,14 @@ class Organism:
         "alive",
         "brain",
         "config",
+        "energy",
         "genome",
         "last_dx",
         "last_dy",
+        "lineage",
         "name",
         "progress",
+        "upkeep",
         "x",
         "y",
     )
@@ -87,6 +91,15 @@ class Organism:
         self.last_dy = 0
         self.age = 0
         self.alive = True
+        self.energy = config.initial_energy
+
+        self.lineage: int = -1
+        """Which founding organism this one descends from. Set by the world."""
+
+        # What this brain costs to run, every timestep, for as long as it lives.
+        # Charged per *distinct sense consulted* rather than per gene, so wiring
+        # the same sense twice is free but reaching for a new one is not.
+        self.upkeep = config.metabolism + config.sense_cost * len(self.brain.needed_sensors)
 
         self.progress: dict[str, float] = {}
         """Scratch space for objectives that accumulate history over a generation."""
@@ -142,11 +155,22 @@ class Organism:
         urge_x *= 1.0 - stillness
         urge_y *= 1.0 - stillness
 
+        spent = self.upkeep
         if (emission := levels[Action.EMIT_PHEROMONE]) > 0:
             world.deposit_pheromone(self.x, self.y, emission * self.config.pheromone_deposit)
+            spent += emission * self.config.emit_cost
 
+        before = (self.x, self.y)
         self.move(_urge_to_step(urge_x), _urge_to_step(urge_y), world)
+        if (self.x, self.y) != before:
+            spent += self.config.move_cost
+
         self.age += 1
+
+        if self.config.energy_enabled:
+            self.energy -= spent
+            if self.energy <= 0.0:
+                world.kill(self)
 
     def move(self, dx: int, dy: int, world: World) -> None:
         """
@@ -176,12 +200,15 @@ class Organism:
 
     def reproduce(self) -> Organism:
         """
-        Produce one offspring: this organism's genome, copied with mutations.
+        Produce one offspring by cloning this organism's genome with mutations.
 
-        Reproduction is asexual, so all new variation comes from mutation. The
-        child is unplaced -- the world decides where it starts.
+        Kept for the asexual case and for direct use; `reproduction.py` owns
+        the general question of who breeds with whom. The child is unplaced --
+        the world decides where it starts.
         """
-        return Organism(self.config, genome=brain_utils.mutate(self.genome, self.config))
+        child = Organism(self.config, genome=brain_utils.mutate(self.genome, self.config))
+        child.lineage = self.lineage
+        return child
 
     def __repr__(self) -> str:
         state = "" if self.alive else ", dead"
@@ -221,10 +248,15 @@ class World:
         config: Settings | None = None,
         objective: Objective | str | None = None,
         n_organisms: int | None = None,
+        strategy: reproduction.Strategy | str | None = None,
     ) -> None:
         self.config = config or settings.DEFAULT
         self.objective = _resolve_objective(objective)
+        self.strategy = reproduction.resolve(strategy or self.config.reproduction)
         self.n_organisms = n_organisms if n_organisms is not None else self.config.n_organisms
+
+        self.extinct = False
+        """Set when a generation leaves nobody able to breed. The run is over."""
 
         self.width = self.config.width
         self.height = self.config.height
@@ -249,8 +281,29 @@ class World:
     def build_initial_config(self) -> list[Organism]:
         """Create the founding population, each with a fully random genome."""
         organisms = [Organism(self.config) for _ in range(self.n_organisms)]
+        # Every founder starts its own line, so later on it can be asked how
+        # many of them still have descendants.
+        for line, org in enumerate(organisms):
+            org.lineage = line
         self.reset_grid(organisms)
         return organisms
+
+    @property
+    def population(self) -> int:
+        """How many organisms there currently are, living or not."""
+        return len(self.organisms)
+
+    @property
+    def zone_fraction(self) -> float:
+        """
+        How big the survival zone is right now.
+
+        Contracts by `zone_shrink_per_generation` each generation, so a
+        solution that worked early stops working later, down to a floor that
+        keeps the target from vanishing entirely.
+        """
+        shrink = (1.0 - self.config.zone_shrink_per_generation) ** self.generation
+        return max(self.config.min_zone_fraction, self.config.survival_zone_fraction * shrink)
 
     def reset_grid(self, organisms: Iterable[Organism]) -> None:
         """Clear the grid and scatter the given organisms over empty cells."""
@@ -262,6 +315,7 @@ class World:
             org.last_dx = org.last_dy = 0
             org.age = 0
             org.alive = True
+            org.energy = self.config.initial_energy
             org.progress.clear()
             org.brain.reset()
             self.place(org, *self.random_empty_cell())
@@ -435,6 +489,9 @@ class World:
         Selection and repopulation happen when the generator finishes, so an
         abandoned generator leaves the world mid-generation and unchanged.
         """
+        if self.extinct:
+            return 0
+
         self.objective.begin_generation(self)
 
         for step in range(self.config.steps_per_generation):
@@ -474,16 +531,24 @@ class World:
 
     def reproduce_organisms(self, survivors: list[Organism]) -> None:
         """
-        Refill the population from the survivors and reset the grid.
+        Build the next generation from the survivors and reset the grid.
 
-        Parents are drawn at random with replacement, so a lone survivor can
-        found an entire generation. With no survivors at all the run would end,
-        so the world reseeds itself with fresh random genomes instead.
+        The population is earned rather than refilled: it grows when the
+        generation went well and shrinks when it did not. If nobody survives --
+        or, under sexual reproduction, nobody found a partner -- the population
+        is gone and the run is over.
         """
-        if survivors:
-            children = [random.choice(survivors).reproduce() for _ in range(self.n_organisms)]
-        else:
-            children = [Organism(self.config) for _ in range(self.n_organisms)]
+        children = reproduction.next_generation(survivors, self.strategy, self.config)
+        if not children:
+            self.extinct = True
+            self.organisms = []
+            self.occupancy[:, :] = False
+            return
+
+        # More offspring than open cells would loop forever looking for room.
+        room = int((~self.barriers).sum())
+        if len(children) > room:
+            children = children[:room]
 
         self.organisms = children
         self.reset_grid(children)

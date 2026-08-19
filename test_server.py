@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import barriers
+import reproduction
 from capability_utils import Action, Sensor
 from objectives import OBJECTIVES
 from server import app, build_settings
@@ -42,6 +43,15 @@ def full_payload(**overrides: Any) -> dict[str, Any]:
         "n_genes": 8,
         "n_inner_neurons": 2,
         "mutation_rate": 0.02,
+        "reproduction": "asexual",
+        "energy_enabled": True,
+        "initial_energy": 140.0,
+        "sense_cost": 0.04,
+        "survival_zone_fraction": 0.12,
+        "zone_shrink": 0.0,
+        "offspring_per_survivor": 2.0,
+        "carrying_capacity": 400,
+        "mating_radius": 18,
         "stride": 1,
         "seed": 3,
         "sensors": [int(s) for s in Sensor],
@@ -70,6 +80,7 @@ def test_options_expose_every_capability(client: TestClient) -> None:
     assert [item["label"] for item in options["actions"]] == [str(a) for a in Action]
     assert options["objectives"] == list(OBJECTIVES)
     assert options["barriers"] == sorted(barriers.LAYOUTS)
+    assert options["reproduction"] == list(reproduction.STRATEGIES)
 
 
 def test_every_sensor_gets_a_menu_heading(client: TestClient) -> None:
@@ -262,6 +273,76 @@ def test_a_static_objective_does_not_resend_its_zones(client: TestClient) -> Non
 
         frame = socket.receive_json()
         assert "zones" not in frame
+
+
+def test_the_new_mechanics_reach_the_settings() -> None:
+    """Every control the UI grew has to actually change the run."""
+    config = build_settings(
+        full_payload(
+            reproduction="sexual",
+            energy_enabled=False,
+            initial_energy=55.0,
+            sense_cost=0.5,
+            zone_shrink=0.02,
+            offspring_per_survivor=3.5,
+            carrying_capacity=99,
+            mating_radius=42,
+        )
+    )
+    assert config.reproduction == "sexual"
+    assert config.energy_enabled is False
+    assert config.initial_energy == 55.0
+    assert config.sense_cost == 0.5
+    assert config.zone_shrink_per_generation == 0.02
+    assert config.offspring_per_survivor == 3.5
+    assert config.carrying_capacity == 99
+    assert config.mating_radius == 42
+
+
+def test_unknown_reproduction_strategy_is_refused() -> None:
+    with pytest.raises(ValueError, match="unknown reproduction strategy"):
+        build_settings(full_payload(reproduction="mitosis"))
+
+
+def test_a_generation_message_carries_the_population_picture(client: TestClient) -> None:
+    """The readouts and the gene-expression chart are all fed from this one message."""
+    with client.websocket_connect("/ws") as socket:
+        socket.send_json(full_payload(steps=3, generations=1, population=30))
+        socket.receive_json()
+
+        while (message := socket.receive_json())["type"] != "generation":
+            pass
+
+        assert message["previous_population"] == 30
+        assert message["capacity"] == 400
+        assert message["zone_fraction"] == pytest.approx(0.12)
+        assert len(message["populations"]) == 1
+
+        expression = message["expression"]
+        assert [item["label"] for item in expression["sensors"]] == [str(s) for s in Sensor]
+        assert [item["label"] for item in expression["actions"]] == [str(a) for a in Action]
+        assert expression["lineages"]["alive"] >= 1
+        assert expression["mean_senses_used"] > 0
+
+
+def test_an_extinct_run_says_so_and_stops(client: TestClient) -> None:
+    """A population that dies out must report it rather than looking finished."""
+    with client.websocket_connect("/ws") as socket:
+        socket.send_json(
+            full_payload(
+                steps=8,
+                generations=50,
+                population=20,
+                survival_zone_fraction=0.01,
+                offspring_per_survivor=0.5,
+                stride=50,
+            )
+        )
+        socket.receive_json()
+
+        while (message := socket.receive_json())["type"] != "done":
+            pass
+        assert message["extinct"] is True
 
 
 def test_stride_thins_the_frames(client: TestClient) -> None:

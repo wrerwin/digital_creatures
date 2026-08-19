@@ -410,20 +410,33 @@ def test_gene_describe_names_its_endpoints() -> None:
 # ----------------------------------------------------------------------------
 
 
-def test_a_generation_preserves_population_size(config: Settings) -> None:
-    """However selection goes, the next generation must be full and placed."""
+def test_a_new_generation_starts_clean(config: Settings) -> None:
+    """
+    However selection goes, whoever survives into the next generation is ready.
+
+    Population size is no longer fixed -- it is earned, and tested in
+    `test_evolution.py` -- but everyone alive must be placed and reset.
+    """
     world = World(config=config)
     for _ in range(3):
         world.run_generation()
-        assert len(world.organisms) == config.n_organisms
+        if world.extinct:
+            break
+        assert world.population <= config.carrying_capacity
         for org in world.organisms:
             assert org.placed, "organism was never placed"
             assert org.age == 0, "a new generation should start at age zero"
             assert org.alive, "a new generation should start alive"
+            assert org.energy == config.initial_energy, "energy should be refilled"
 
 
-def test_extinction_reseeds_rather_than_ending_the_run(config: Settings) -> None:
-    """With no survivors the world must refill itself instead of emptying."""
+def test_an_impossible_objective_ends_the_run(config: Settings) -> None:
+    """
+    With nobody able to breed, the population is gone and stays gone.
+
+    This used to reseed from fresh random genomes, which quietly hid the fact
+    that a run had failed. Extinction is now the honest outcome.
+    """
 
     class Impossible(objectives.Objective):
         name = "impossible"
@@ -433,7 +446,9 @@ def test_extinction_reseeds_rather_than_ending_the_run(config: Settings) -> None
 
     world = World(config=config, objective=Impossible())
     world.run_generation()
-    assert len(world.organisms) == config.n_organisms
+
+    assert world.extinct
+    assert world.organisms == []
 
 
 @pytest.mark.parametrize("name", list(OBJECTIVES))
