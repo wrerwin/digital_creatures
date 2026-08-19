@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>digital creatures</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>digital creatures</h1>
+      <p class="tagline">
+        Nobody tells them what to do. Pick the rules, then watch what evolves.
+      </p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>The world</h2>
+
+        <label>
+          Objective
+          <select id="objective"></select>
+        </label>
+
+        <label>
+          Obstacles
+          <select id="barriers"></select>
+        </label>
+
+        <div class="row">
+          <label>
+            Population
+            <input id="population" type="number" min="2" max="2000" step="10" />
+          </label>
+          <label>
+            Steps / generation
+            <input id="steps" type="number" min="1" max="2000" step="10" />
+          </label>
+        </div>
+
+        <div class="row">
+          <label>
+            Generations
+            <input id="generations" type="number" min="1" max="10000" step="10" />
+          </label>
+          <label>
+            Seed <span class="hint">(blank = random)</span>
+            <input id="seed" type="number" placeholder="random" />
+          </label>
+        </div>
+
+        <h2>The creatures</h2>
+
+        <div class="row">
+          <label>
+            Genes
+            <input id="n_genes" type="number" min="1" max="200" step="1" />
+          </label>
+          <label>
+            Inner neurons
+            <input id="n_inner_neurons" type="number" min="1" max="32" step="1" />
+          </label>
+        </div>
+
+        <label>
+          Mutation rate <span class="hint" id="mutation_label"></span>
+          <input id="mutation_rate" type="range" min="0" max="0.2" step="0.005" />
+        </label>
+
+        <!-- The capabilities menus: a dropdown holding checkboxes, so a run can
+             be given a deliberately restricted creature. -->
+        <div class="dropdown" id="sensors-dropdown">
+          <button type="button" class="dropdown-toggle" aria-expanded="false">
+            <span>Senses</span>
+            <span class="badge" id="sensors-count"></span>
+          </button>
+          <div class="dropdown-menu" hidden>
+            <div class="dropdown-actions">
+              <button type="button" data-select="all" data-target="sensors">all</button>
+              <button type="button" data-select="none" data-target="sensors">none</button>
+            </div>
+            <div id="sensors-list"></div>
+          </div>
+        </div>
+
+        <div class="dropdown" id="actions-dropdown">
+          <button type="button" class="dropdown-toggle" aria-expanded="false">
+            <span>Actions</span>
+            <span class="badge" id="actions-count"></span>
+          </button>
+          <div class="dropdown-menu" hidden>
+            <div class="dropdown-actions">
+              <button type="button" data-select="all" data-target="actions">all</button>
+              <button type="button" data-select="none" data-target="actions">none</button>
+            </div>
+            <div id="actions-list"></div>
+          </div>
+        </div>
+
+        <label>
+          Speed <span class="hint" id="stride_label"></span>
+          <input id="stride" type="range" min="1" max="40" step="1" value="1" />
+        </label>
+
+        <div class="buttons">
+          <button id="start" class="primary" type="button">Run</button>
+          <button id="stop" type="button" disabled>Stop</button>
+        </div>
+
+        <p id="status" class="status"></p>
+      </section>
+
+      <section class="stage">
+        <canvas id="world" width="600" height="600"></canvas>
+        <div class="readouts">
+          <div class="readout"><span id="gen-value">—</span><label>generation</label></div>
+          <div class="readout"><span id="alive-value">—</span><label>alive</label></div>
+          <div class="readout"><span id="survivors-value">—</span><label>last survivors</label></div>
+        </div>
+        <canvas id="chart" width="600" height="140"></canvas>
+        <details class="brain">
+          <summary>Wiring of one creature from the last generation</summary>
+          <pre id="brain">Run a generation to see a brain.</pre>
+        </details>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

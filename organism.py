@@ -30,7 +30,7 @@ from capability_utils import Action, Sensor, read_sensors
 from objectives import OBJECTIVES, Objective
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Generator, Iterable
 
     import numpy.typing as npt
 
@@ -423,14 +423,17 @@ class World:
         self.pheromone *= self.config.pheromone_decay
         self.step += 1
 
-    def run_generation(self, on_step: Callable[[World, int], None] | None = None) -> int:
+    def iter_generation(self) -> Generator[int, None, int]:
         """
-        Run one full generation, then select and repopulate.
+        Run one generation as a generator, pausing after each timestep.
 
-        `on_step` is called with (world, step) after each timestep, which is how
-        `execute.py` draws the animation without the world knowing about it.
+        Yields the step number, and returns the number of survivors once
+        exhausted. Pausing between steps is what lets a caller that cannot
+        block -- the web server, streaming frames -- drive the simulation at
+        its own pace without the world knowing anything about it.
 
-        Returns the number of organisms that met the objective.
+        Selection and repopulation happen when the generator finishes, so an
+        abandoned generator leaves the world mid-generation and unchanged.
         """
         self.objective.begin_generation(self)
 
@@ -440,13 +443,30 @@ class World:
             for org in self.organisms:
                 if org.alive:
                     self.objective.observe(org, self)
-            if on_step is not None:
-                on_step(self, step)
+            yield step
 
         survivors = self.select_survivors()
         self.reproduce_organisms(survivors)
         self.generation += 1
         return len(survivors)
+
+    def run_generation(self, on_step: Callable[[World, int], None] | None = None) -> int:
+        """
+        Run one full generation, then select and repopulate.
+
+        `on_step` is called with (world, step) after each timestep, which is how
+        `execute.py` draws the animation without the world knowing about it.
+
+        Returns the number of organisms that met the objective.
+        """
+        generation = self.iter_generation()
+        while True:
+            try:
+                step = next(generation)
+            except StopIteration as finished:
+                return finished.value
+            if on_step is not None:
+                on_step(self, step)
 
     def select_survivors(self) -> list[Organism]:
         """The organisms that satisfy the objective. Everyone else dies."""

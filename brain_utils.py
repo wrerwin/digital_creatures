@@ -130,15 +130,16 @@ def _mutated(gene: Gene, config: Settings) -> Gene:
 
 
 def _random_source_id(kind: Source, config: Settings) -> int:
+    """Pick an endpoint from the capabilities this run allows, not from every one."""
     if kind is Source.SENSOR:
-        return random.randrange(len(Sensor))
+        return int(random.choice(config.enabled_sensors))
     return random.randrange(config.n_inner_neurons)
 
 
 def _random_sink_id(kind: Sink, config: Settings) -> int:
     if kind is Sink.INNER:
         return random.randrange(config.n_inner_neurons)
-    return random.randrange(len(Action))
+    return int(random.choice(config.enabled_actions))
 
 
 # ----------------------------------------------------------------------------
