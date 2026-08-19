@@ -4,10 +4,12 @@ Little guys on a grid. Nobody tells them what to do — the only rule is who get
 to reproduce, and the behaviour that follows from that is the interesting part.
 
 ```bash
-python execute.py
+uv run python execute.py
 ```
 
-Generation 0 is random noise; watch the survival percentage climb.
+`uv` reads `pyproject.toml` and `.python-version`, installs Python 3.13 and the
+dependencies on first run, and needs no activated virtualenv. Generation 0 is
+random noise; watch the survival percentage climb.
 
 ## How it works
 
@@ -16,7 +18,7 @@ criterion** decides who reproduces — by default, "be in the left fifth of the
 world". Survivors are cloned with mutation until the population is full again,
 the grid is cleared, and the next generation starts.
 
-Each organism has a **genome**: a fixed-length list of genes, where every gene
+Each organism has a **genome**: a fixed-length tuple of genes, where every gene
 is one connection.
 
 ```
@@ -41,30 +43,50 @@ inner_2 --(+1.44)--> move_forward
 
 | file | what's in it |
 | --- | --- |
-| `settings.py` | every tunable number: world size, population, mutation rate, genome length |
-| `capability_utils.py` | what a creature can sense and what it can do — the two lists that define its interface to the world |
+| `settings.py` | `Settings`, a frozen dataclass holding every tunable number |
+| `capability_utils.py` | the `Sensor` and `Action` enums — what a creature can perceive and do |
 | `brain_utils.py` | genes, mutation, and the network a genome builds |
-| `organism.py` | organisms, the grid world, the generational cycle, and the survival criteria |
+| `organism.py` | `Organism`, `World`, the generational cycle, and the survival criteria |
 | `execute.py` | the runner and the live animation |
-| `tests.py` | invariant checks — run `python tests.py` |
+| `test_simulation.py` | invariant checks — run `uv run pytest` |
 | `sandbox.ipynb` | design notes and a scratchpad for poking at individual creatures |
 
 ## Knobs worth turning
 
 ```bash
-python execute.py --criterion corners   # left, right, centre, corners
-python execute.py --watch 0             # skip the animation, just print numbers
-python execute.py --watch 5             # animate every 5th generation
-python execute.py --seed 42             # repeatable run
+uv run python execute.py --criterion corners   # left, right, centre, corners
+uv run python execute.py --watch 0             # skip the animation, just print numbers
+uv run python execute.py --watch 5             # animate every 5th generation
+uv run python execute.py --seed 42             # repeatable run
 ```
 
 The survival criterion is the whole selection pressure. Adding one is a
 four-line function at the bottom of `organism.py` plus an entry in `CRITERIA`;
 the animation works out how to shade the new zone by itself.
 
-Adding a sense or an action is a single entry in `capability_utils.py` — no
-other file needs to change, and evolution starts using it on the next run.
+Adding a sense or an action is a single enum member in `capability_utils.py`
+plus its function — no other file needs to change, and evolution starts using
+it on the next run.
 
-## Requirements
+`Settings` is frozen, so vary it with `dataclasses.replace` rather than by
+assigning to module globals:
 
-Python 3.7+, `numpy`, `matplotlib`.
+```python
+from dataclasses import replace
+from organism import CRITERIA, World
+from settings import Settings
+
+config = replace(Settings(), point_mutation_rate=0.08, n_organisms=500)
+world = World(config=config, criterion=CRITERIA["corners"])
+```
+
+## Development
+
+```bash
+uv sync                 # create the environment
+uv run pytest           # 27 invariant checks
+uv run ruff check .     # lint
+uv run ruff format .    # format
+```
+
+`uv.lock` is committed, so `uv sync` reproduces the exact dependency set.
