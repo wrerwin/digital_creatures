@@ -50,7 +50,56 @@
           </label>
         </div>
 
+        <h2>Pressure</h2>
+
+        <label>
+          Survival zone <span class="hint" id="zone_label"></span>
+          <input id="survival_zone_fraction" type="range" min="0.02" max="0.5" step="0.01" />
+        </label>
+
+        <label>
+          Zone shrink per generation <span class="hint" id="shrink_label"></span>
+          <input id="zone_shrink" type="range" min="0" max="0.05" step="0.002" />
+        </label>
+
+        <div class="row">
+          <label>
+            Offspring / survivor
+            <input id="offspring_per_survivor" type="number" min="0.1" max="20" step="0.1" />
+          </label>
+          <label>
+            Carrying capacity
+            <input id="carrying_capacity" type="number" min="2" max="5000" step="50" />
+          </label>
+        </div>
+
+        <label class="check standalone">
+          <input id="energy_enabled" type="checkbox" checked />
+          Metabolism — brains burn energy and can starve
+        </label>
+
+        <div class="row">
+          <label>
+            Starting energy
+            <input id="initial_energy" type="number" min="1" max="10000" step="10" />
+          </label>
+          <label>
+            Cost per sense
+            <input id="sense_cost" type="number" min="0" max="5" step="0.01" />
+          </label>
+        </div>
+
         <h2>The creatures</h2>
+
+        <label>
+          Reproduction
+          <select id="reproduction"></select>
+        </label>
+
+        <label id="mating_radius_field">
+          Mating radius <span class="hint">(sexual only)</span>
+          <input id="mating_radius" type="number" min="1" max="200" step="1" />
+        </label>
 
         <div class="row">
           <label>
@@ -117,8 +166,33 @@
           <div class="readout"><span id="gen-value">—</span><label>generation</label></div>
           <div class="readout"><span id="alive-value">—</span><label>alive</label></div>
           <div class="readout"><span id="survivors-value">—</span><label>last survivors</label></div>
+          <div class="readout"><span id="pop-value">—</span><label>population</label></div>
+          <div class="readout"><span id="lineage-value">—</span><label>lineages left</label></div>
         </div>
-        <canvas id="chart" width="600" height="140"></canvas>
+
+        <canvas id="chart" width="600" height="150"></canvas>
+        <p class="legend">
+          <span class="key survival"></span> share surviving
+          <span class="key population"></span> population vs capacity
+        </p>
+
+        <details class="expression" open>
+          <summary>Gene expression across the population</summary>
+          <p class="expression-note" id="expression-summary">
+            Run a generation to see what the population is keeping.
+          </p>
+          <div class="expression-grid">
+            <div>
+              <h3>Senses wired</h3>
+              <div id="sensor-bars" class="bars"></div>
+            </div>
+            <div>
+              <h3>Actions driven</h3>
+              <div id="action-bars" class="bars"></div>
+            </div>
+          </div>
+        </details>
+
         <details class="brain">
           <summary>Wiring of one creature from the last generation</summary>
           <pre id="brain">Run a generation to see a brain.</pre>

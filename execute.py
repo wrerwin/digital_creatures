@@ -23,6 +23,8 @@ import numpy as np
 
 import barriers
 import inspect_utils
+import population_stats
+import reproduction
 from objectives import OBJECTIVES
 from organism import Organism, World
 from settings import Settings
@@ -49,6 +51,29 @@ def parse_args() -> argparse.Namespace:
         choices=sorted(barriers.LAYOUTS),
         default=defaults.barrier_layout,
         help="obstacle layout built into the world",
+    )
+    parser.add_argument(
+        "--reproduction",
+        choices=list(reproduction.STRATEGIES),
+        default=defaults.reproduction,
+        help="asexual clones survivors; sexual pairs nearby survivors and crosses their genomes",
+    )
+    parser.add_argument(
+        "--no-metabolism",
+        action="store_true",
+        help="switch off energy, so brains cost nothing to run and nobody starves",
+    )
+    parser.add_argument(
+        "--zone-shrink",
+        type=float,
+        default=defaults.zone_shrink_per_generation,
+        metavar="F",
+        help="fraction the survival zone contracts by each generation",
+    )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="print how the population's genes are being expressed at the end",
     )
     parser.add_argument("--generations", type=int, default=defaults.n_generations)
     parser.add_argument("--population", type=int, default=defaults.n_organisms)
@@ -104,6 +129,9 @@ def build_config(args: argparse.Namespace) -> Settings:
         steps_per_generation=args.steps,
         n_generations=args.generations,
         barrier_layout=args.barriers,
+        reproduction=args.reproduction,
+        energy_enabled=not args.no_metabolism,
+        zone_shrink_per_generation=args.zone_shrink,
     )
 
 
@@ -207,24 +235,30 @@ def run(args: argparse.Namespace) -> World:
     title = args.objective if args.barriers == "none" else f"{args.objective} / {args.barriers}"
     animator = Animator(world, title) if args.watch else None
 
+    metabolism = "metabolism off" if args.no_metabolism else "metabolism on"
     print(
         f"{config.n_organisms} organisms, {config.steps_per_generation} steps per generation, "
-        f'"{args.objective}" objective, "{args.barriers}" barriers'
+        f'"{args.objective}" objective, "{args.barriers}" barriers, '
+        f"{args.reproduction} reproduction, {metabolism}"
     )
 
     started = time.monotonic()
     try:
         for generation in range(config.n_generations):
             animating = animator is not None and generation % args.watch == 0
+            before = world.population
             survivors = world.run_generation(on_step=animator.draw if animating else None)
 
-            share = survivors / config.n_organisms
+            share = survivors / max(before, 1)
             elapsed = time.monotonic() - started
             print(
                 f"generation {generation:>4}   "
-                f"survivors {survivors:>4} / {config.n_organisms:<4} ({share:6.1%})   "
-                f"{elapsed:6.1f}s"
+                f"survivors {survivors:>4} / {before:<4} ({share:6.1%})   "
+                f"next pop {world.population:>4}   {elapsed:6.1f}s"
             )
+            if world.extinct:
+                print("\nextinct: nobody left to breed.")
+                break
     except KeyboardInterrupt:
         print("\nstopped early")
     finally:
@@ -265,6 +299,10 @@ def report(world: World, args: argparse.Namespace) -> None:
     """Print, save and optionally draw one creature from the final generation."""
     if not world.organisms:
         return
+
+    if args.stats:
+        print("\nhow the population's genes are being expressed:")
+        print(population_stats.summarise(world))
 
     example = world.organisms[0]
     consulted = ", ".join(str(s) for s in example.brain.needed_sensors) or "none"

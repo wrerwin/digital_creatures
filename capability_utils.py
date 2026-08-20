@@ -49,8 +49,9 @@ class Sensor(IntEnum):
     LAST_MOVE_X = 13
     LAST_MOVE_Y = 14
     AGE = 15
-    RANDOM = 16
-    BIAS = 17
+    ENERGY = 16
+    RANDOM = 17
+    BIAS = 18
 
     def __str__(self) -> str:
         return self.name.lower()
@@ -210,6 +211,13 @@ def sense_age(org: Organism, world: World) -> float:
     return org.age / world.config.steps_per_generation
 
 
+def sense_energy(org: Organism, world: World) -> float:
+    """How full the tank is: 1 at the start of a generation, 0 at starvation."""
+    if org.config.initial_energy <= 0:
+        return 0.0
+    return max(0.0, min(1.0, org.energy / org.config.initial_energy))
+
+
 def sense_random(org: Organism, world: World) -> float:
     """Noise, so evolution has a source of unpredictability to draw on."""
     return random.uniform(-1.0, 1.0)
@@ -237,6 +245,7 @@ SENSOR_FUNCTIONS: Final[dict[Sensor, SensorFn]] = {
     Sensor.LAST_MOVE_X: sense_last_move_x,
     Sensor.LAST_MOVE_Y: sense_last_move_y,
     Sensor.AGE: sense_age,
+    Sensor.ENERGY: sense_energy,
     Sensor.RANDOM: sense_random,
     Sensor.BIAS: sense_bias,
 }

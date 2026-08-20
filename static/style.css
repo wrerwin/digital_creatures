@@ -308,6 +308,118 @@ input[type="range"] {
   letter-spacing: 0.07em;
 }
 
+/* Gene expression --------------------------------------------------------- */
+
+.check.standalone {
+  margin: 0.75rem 0;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--panel-edge);
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+
+.legend {
+  display: flex;
+  gap: 1rem;
+  margin: -0.25rem 0 0;
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+}
+
+.key {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin-right: 0.3rem;
+  vertical-align: middle;
+  border-radius: 2px;
+}
+
+.key.survival {
+  background: #6ea8fe;
+}
+
+.key.population {
+  background: #4ec9a0;
+}
+
+.expression summary,
+.brain summary {
+  color: var(--ink-dim);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.expression-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-dim);
+}
+
+.expression-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 700px) {
+  .expression-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.expression-grid h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #6f7488;
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr 2.6rem;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+}
+
+.bar-row.dropped {
+  opacity: 0.4;
+}
+
+.bar-track {
+  height: 9px;
+  background: var(--grid);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #3f6fb5, #6ea8fe);
+  transition: width 0.25s ease;
+}
+
+.bar-row.action .bar-fill {
+  background: linear-gradient(90deg, #b5622f, #f0955a);
+}
+
+.bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
 .brain summary {
   color: var(--ink-dim);
   font-size: 0.82rem;
