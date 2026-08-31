@@ -258,6 +258,9 @@ class World:
         self.extinct = False
         """Set when a generation leaves nobody able to breed. The run is over."""
 
+        self.founding_lineages = 0
+        """How many separate lines the run started with. Set by `found_lineages`."""
+
         self.width = self.config.width
         self.height = self.config.height
 
@@ -281,12 +284,21 @@ class World:
     def build_initial_config(self) -> list[Organism]:
         """Create the founding population, each with a fully random genome."""
         organisms = [Organism(self.config) for _ in range(self.n_organisms)]
-        # Every founder starts its own line, so later on it can be asked how
-        # many of them still have descendants.
-        for line, org in enumerate(organisms):
-            org.lineage = line
+        self.found_lineages(organisms)
         self.reset_grid(organisms)
         return organisms
+
+    def found_lineages(self, organisms: list[Organism]) -> None:
+        """
+        Give each organism its own line, and remember how many there were.
+
+        Keeping the founding count is what makes the survivor count mean
+        anything: six lineages left is unremarkable out of ten and a near-total
+        collapse out of four hundred.
+        """
+        for line, org in enumerate(organisms):
+            org.lineage = line
+        self.founding_lineages = len(organisms)
 
     @property
     def population(self) -> int:

@@ -108,13 +108,22 @@ def lineages(world: World) -> dict[str, Any]:
     A run that collapses to one lineage has lost its variation, and will only
     find anything new by mutation from then on.
     """
+    founding = world.founding_lineages
     counts = Counter(org.lineage for org in world.organisms)
     if not counts:
-        return {"alive": 0, "dominant_share": 0.0, "top": []}
+        return {
+            "alive": 0,
+            "founding": founding,
+            "remaining": 0.0,
+            "dominant_share": 0.0,
+            "top": [],
+        }
 
     total = sum(counts.values())
     return {
         "alive": len(counts),
+        "founding": founding,
+        "remaining": len(counts) / founding if founding else 0.0,
         "dominant_share": counts.most_common(1)[0][1] / total,
         "top": [{"lineage": line, "share": count / total} for line, count in counts.most_common(8)],
     }
@@ -139,7 +148,13 @@ def _empty() -> dict[str, Any]:
         "actions": [_entry(str(a), 0, 0, 0.0, 1) for a in Action],
         "mean_senses_used": 0.0,
         "mean_upkeep": 0.0,
-        "lineages": {"alive": 0, "dominant_share": 0.0, "top": []},
+        "lineages": {
+            "alive": 0,
+            "founding": 0,
+            "remaining": 0.0,
+            "dominant_share": 0.0,
+            "top": [],
+        },
         "energy": {"mean": 0.0, "lowest": 0.0, "highest": 0.0},
     }
 
@@ -152,9 +167,11 @@ def summarise(world: World, width: int = 34) -> str:
     abandoned two thirds of its senses should look like it has.
     """
     stats = expression(world)
+    lineage = stats["lineages"]
     lines = [
         f"population {stats['population']}   "
-        f"lineages {stats['lineages']['alive']}   "
+        f"lineages {lineage['alive']} of {lineage['founding']} "
+        f"({lineage['remaining']:.0%} remaining)   "
         f"mean senses wired {stats['mean_senses_used']:.1f}"
     ]
 

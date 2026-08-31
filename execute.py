@@ -220,6 +220,7 @@ def seed_population(world: World, path: str) -> None:
     """Replace every starting genome with one loaded from disk."""
     genome = inspect_utils.load_genome(path)
     world.organisms = [Organism(world.config, genome=genome) for _ in range(world.n_organisms)]
+    world.found_lineages(world.organisms)
     world.reset_grid(world.organisms)
     print(f"seeded {world.n_organisms} organisms from {path}")
 

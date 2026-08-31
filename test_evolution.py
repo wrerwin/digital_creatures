@@ -332,6 +332,45 @@ def test_a_sexual_child_takes_one_parent_line(config: Settings) -> None:
     assert len(lines) == 2, "one parent's line is never being passed on"
 
 
+def test_lineages_are_counted_against_the_founding_population(config: Settings) -> None:
+    """
+    Survivors alone are meaningless without knowing how many lines there were.
+
+    Six lineages left is unremarkable out of ten and a near-total collapse out
+    of four hundred, so the founding count travels with the live one.
+    """
+    world = World(config=config)
+    stats = population_stats.lineages(world)
+
+    assert stats["founding"] == config.n_organisms
+    assert stats["alive"] == config.n_organisms
+    assert stats["remaining"] == pytest.approx(1.0)
+
+
+def test_remaining_share_falls_as_lines_die_out(config: Settings) -> None:
+    """The ratio has to track the collapse, not just the raw count."""
+    world = World(config=config, strategy="asexual")
+    founding = world.founding_lineages
+
+    world.reproduce_organisms(world.organisms[:2])
+    stats = population_stats.lineages(world)
+
+    assert stats["founding"] == founding, "the founding count must not drift"
+    assert stats["alive"] <= 2
+    assert stats["remaining"] == pytest.approx(stats["alive"] / founding)
+    assert stats["remaining"] < 1.0
+
+
+def test_an_extinct_population_still_reports_its_founders(config: Settings) -> None:
+    """The UI reads this after a wipe-out, so it cannot go missing."""
+    world = World(config=config)
+    world.reproduce_organisms([])
+
+    stats = population_stats.expression(world)["lineages"]
+    assert stats["alive"] == 0
+    assert stats["remaining"] == 0.0
+
+
 def test_lineages_collapse_as_a_run_proceeds(config: Settings) -> None:
     """
     Selection should concentrate the gene pool, not preserve every founder.

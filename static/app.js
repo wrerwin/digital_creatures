@@ -14,10 +14,24 @@ const ctx = canvas.getContext("2d");
 const chart = el("chart");
 const chartCtx = chart.getContext("2d");
 
+const timeline = el("timeline");
+const timelineCtx = timeline.getContext("2d");
+
 let socket = null;
 let options = null;
 let layers = null; // static per-run: size, barriers, zone masks
 let running = false;
+
+/*
+ * How each capability's share has moved, generation by generation.
+ *
+ * Accumulated here rather than on the server: the server already sends the
+ * current expression every generation, and resending the whole history each
+ * time would grow quadratically over a long run.
+ */
+let senseHistory = new Map(); // label -> array of shares, one per generation
+let hoveredLabel = null;
+let pinnedLabel = null;
 
 // Colours for the zone shadings the objective reports, keyed by the matplotlib
 // colormap name the Python side uses.
@@ -226,6 +240,10 @@ function start() {
   }
 
   resetChart();
+  senseHistory = new Map();
+  hoveredLabel = null;
+  pinnedLabel = null;
+  drawTimeline();
   el("brain").textContent = "Running…";
   setStatus("Starting…");
   setRunning(true);
@@ -282,8 +300,15 @@ function handle(message) {
         `${message.survivors} / ${message.previous_population}`;
       el("pop-value").textContent = message.population;
       el("brain").textContent = message.brain || "(no creatures)";
-      drawChart(message.history, message.populations, message.capacity);
+      recordHistory(message.expression);
+      drawChart(
+        message.history,
+        message.populations,
+        message.capacity,
+        message.lineage_shares,
+      );
       drawExpression(message.expression, message.zone_fraction);
+      drawTimeline();
       break;
     case "done":
       setRunning(false);
@@ -400,7 +425,7 @@ function resetChart() {
   chartCtx.clearRect(0, 0, chart.width, chart.height);
 }
 
-function drawChart(history, populations, capacity) {
+function drawChart(history, populations, capacity, lineageShares) {
   const { width, height } = chart;
   const pad = 26;
   chartCtx.clearRect(0, 0, width, height);
@@ -450,6 +475,7 @@ function drawChart(history, populations, capacity) {
   };
 
   if (populations && capacity) line(populations, "#4ec9a0", 1 / capacity);
+  if (lineageShares) line(lineageShares, "#c98ae0", 1);
   line(history, "#6ea8fe", 1);
 }
 
@@ -465,13 +491,14 @@ function drawExpression(expression, zoneFraction) {
   renderBars(el("action-bars"), expression.actions, "action");
 
   const lineages = expression.lineages;
-  el("lineage-value").textContent = lineages.alive;
+  el("lineage-value").textContent = `${lineages.alive} / ${lineages.founding}`;
 
   el("expression-summary").textContent =
     `${expression.population} creatures · ` +
     `${expression.mean_senses_used.toFixed(1)} senses wired on average · ` +
     `upkeep ${expression.mean_upkeep.toFixed(2)}/step · ` +
-    `${lineages.alive} lineages left, biggest holds ` +
+    `${lineages.alive} of ${lineages.founding} founding lineages left ` +
+    `(${Math.round(lineages.remaining * 100)}%), biggest holds ` +
     `${Math.round(lineages.dominant_share * 100)}% · ` +
     `zone ${(zoneFraction * 100).toFixed(1)}%`;
 }
@@ -484,10 +511,12 @@ function renderBars(host, entries, kind) {
     for (const entry of entries) {
       const row = document.createElement("div");
       row.className = `bar-row ${kind}`;
+      row.dataset.label = entry.label;
       row.innerHTML =
         `<span class="bar-label"></span>` +
         `<span class="bar-track"><span class="bar-fill"></span></span>` +
         `<span class="bar-value"></span>`;
+      attachHistoryHandlers(row, entry.label);
       host.append(row);
     }
   }
@@ -495,10 +524,112 @@ function renderBars(host, entries, kind) {
   entries.forEach((entry, index) => {
     const row = host.children[index];
     row.classList.toggle("dropped", entry.share === 0);
+    row.classList.toggle("pinned", pinnedLabel === entry.label);
     row.querySelector(".bar-label").textContent = entry.label;
     row.querySelector(".bar-fill").style.width = `${entry.share * 100}%`;
     row.querySelector(".bar-value").textContent = `${Math.round(entry.share * 100)}%`;
   });
+}
+
+/*
+ * Sweeping the pointer across the bars is the interaction: pointerenter is
+ * enough for a drag, because holding the button down while moving still fires
+ * enter on each row it crosses. Clicking pins one so the pointer can leave.
+ */
+function attachHistoryHandlers(row, label) {
+  row.addEventListener("pointerenter", () => {
+    hoveredLabel = label;
+    drawTimeline();
+  });
+  row.addEventListener("pointerleave", () => {
+    if (hoveredLabel === label) hoveredLabel = null;
+    drawTimeline();
+  });
+  row.addEventListener("click", () => {
+    pinnedLabel = pinnedLabel === label ? null : label;
+    for (const other of document.querySelectorAll(".bar-row")) {
+      other.classList.toggle("pinned", other.dataset.label === pinnedLabel);
+    }
+    drawTimeline();
+  });
+}
+
+function recordHistory(expression) {
+  for (const entry of [...expression.sensors, ...expression.actions]) {
+    if (!senseHistory.has(entry.label)) senseHistory.set(entry.label, []);
+    senseHistory.get(entry.label).push(entry.share);
+  }
+}
+
+function drawTimeline() {
+  const { width, height } = timeline;
+  const label = hoveredLabel || pinnedLabel;
+  const series = label ? senseHistory.get(label) : null;
+  const pad = 26;
+
+  timelineCtx.clearRect(0, 0, width, height);
+
+  timelineCtx.strokeStyle = "#2c2f3d";
+  timelineCtx.lineWidth = 1;
+  timelineCtx.fillStyle = "#6f7488";
+  timelineCtx.font = "10px system-ui, sans-serif";
+  for (const fraction of [0, 0.5, 1]) {
+    const y = height - pad + fraction * (pad - height + pad / 2);
+    timelineCtx.beginPath();
+    timelineCtx.moveTo(pad, y);
+    timelineCtx.lineTo(width - 6, y);
+    timelineCtx.stroke();
+    timelineCtx.fillText(`${Math.round(fraction * 100)}%`, 2, y + 3);
+  }
+
+  const head = el("timeline-label");
+  const hint = el("timeline-hint");
+
+  if (!series || series.length === 0) {
+    head.textContent = label
+      ? `${label} — no history yet`
+      : "Sweep across a bar to see its history";
+    hint.textContent = pinnedLabel ? `pinned: ${pinnedLabel}` : "";
+    return;
+  }
+
+  const first = series[0];
+  const last = series[series.length - 1];
+  const peak = Math.max(...series);
+  head.textContent =
+    `${label} — now ${Math.round(last * 100)}%, ` +
+    `started ${Math.round(first * 100)}%, peaked ${Math.round(peak * 100)}%`;
+  hint.textContent = pinnedLabel === label ? "pinned — click again to release" : "click to pin";
+
+  const span = Math.max(series.length - 1, 1);
+  const toX = (index) => pad + (index / span) * (width - pad - 6);
+  const toY = (value) => height - pad - value * (height - pad * 1.5);
+
+  // A filled area under the line, so a capability that dies out reads as a
+  // shape collapsing rather than just a line drifting downward.
+  timelineCtx.beginPath();
+  timelineCtx.moveTo(toX(0), toY(0));
+  series.forEach((value, index) => timelineCtx.lineTo(toX(index), toY(value)));
+  timelineCtx.lineTo(toX(series.length - 1), toY(0));
+  timelineCtx.closePath();
+  timelineCtx.fillStyle = "rgba(110, 168, 254, 0.18)";
+  timelineCtx.fill();
+
+  timelineCtx.beginPath();
+  series.forEach((value, index) => {
+    const x = toX(index);
+    const y = toY(value);
+    if (index === 0) timelineCtx.moveTo(x, y);
+    else timelineCtx.lineTo(x, y);
+  });
+  timelineCtx.strokeStyle = "#6ea8fe";
+  timelineCtx.lineWidth = 2;
+  timelineCtx.stroke();
+
+  timelineCtx.fillStyle = "#6ea8fe";
+  timelineCtx.beginPath();
+  timelineCtx.arc(toX(series.length - 1), toY(last), 3, 0, Math.PI * 2);
+  timelineCtx.fill();
 }
 
 /* ---------------------------------------------------------------- status */

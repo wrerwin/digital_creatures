@@ -18,13 +18,14 @@ import asyncio
 import base64
 import contextlib
 import random
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -41,6 +42,21 @@ STATIC = HERE / "static"
 
 app = FastAPI(title="digital creatures")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.middleware("http")
+async def revalidate_static(request: Request, call_next: Callable[..., Any]) -> Response:
+    """
+    Make the browser check whether the front end changed before reusing it.
+
+    Without this a browser happily serves an edited app.js from its heuristic
+    cache, so a change appears to have had no effect at all. `no-cache` still
+    allows a 304, so nothing is re-downloaded unless it actually changed.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/static") or request.url.path == "/":
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/")
@@ -261,6 +277,7 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
     stride = _clamp_int(payload.get("stride"), 1, 200, 1)
     history: list[float] = []
     populations: list[int] = []
+    lineage_shares: list[float] = []
 
     for _ in range(config.n_generations):
         before = world.population
@@ -281,8 +298,10 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
                 # promptly rather than at the end of the generation.
                 await asyncio.sleep(0)
 
+        expression = population_stats.expression(world)
         history.append(survivors / max(before, 1))
         populations.append(world.population)
+        lineage_shares.append(expression["lineages"]["remaining"])
         await websocket.send_json(
             {
                 "type": "generation",
@@ -294,7 +313,8 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
                 "zone_fraction": world.zone_fraction,
                 "history": history,
                 "populations": populations,
-                "expression": population_stats.expression(world),
+                "lineage_shares": lineage_shares,
+                "expression": expression,
                 "brain": world.organisms[0].brain.describe() if world.organisms else "",
             }
         )

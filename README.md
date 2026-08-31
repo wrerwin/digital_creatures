@@ -161,12 +161,25 @@ view tells you what evolution has decided: for every sense and action, the
 share of the population that wires it at all.
 
 It is the most informative thing in the UI. A sense at 100% has become
-load-bearing; one that falls to 0% has been actively selected away. In one
-measured run against the `left` objective, `x_position` went to 100% while
-`y_position` and `population_density` were driven to zero — and 200 founding
-lineages collapsed to 2.
+load-bearing; one that falls to 0% has been actively selected away.
 
-`--stats` prints the same picture in the terminal.
+**Sweep the pointer across the bars** to see how any one capability got there —
+its whole share-per-generation history, with where it started, where it peaked
+and where it ended. Click a bar to pin it so the pointer can go elsewhere.
+This is where the story is: in one measured run, `x_position` fell from 45% to
+3% while `population_density` climbed from 33% to 67%, which is the population
+switching from navigating by absolute position to navigating by its neighbours.
+
+**Lineages** are counted against the founders, not in isolation — five lineages
+left is unremarkable out of ten and a near-total collapse out of two hundred.
+The readout and the purple line on the chart both show the ratio. Runs
+routinely end with 2–3% of founding lines still present.
+
+`--stats` prints the same picture in the terminal:
+
+```
+population 156   lineages 5 of 150 (3% remaining)   mean senses wired 8.1
+```
 
 ## Obstacles
 
@@ -243,7 +256,7 @@ world = World(config=config, objective="there-and-back")
 
 ```bash
 uv sync                 # create the environment
-uv run pytest           # 125 invariant checks
+uv run pytest           # 130 invariant checks
 uv run ruff check .     # lint
 uv run ruff format .    # format
 ```
