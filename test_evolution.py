@@ -19,6 +19,7 @@ import population_stats
 import reproduction
 from brain_utils import Gene, Sink, Source
 from capability_utils import Action, Sensor
+from objectives import OBJECTIVES, Hazard
 from organism import Organism, World
 from reproduction import Asexual, Sexual
 from settings import Settings
@@ -132,12 +133,46 @@ def test_population_grows_and_shrinks_with_survival(config: Settings) -> None:
     The knife's edge: `offspring_per_survivor` sets the replacement rate.
 
     At 2.0, half the population surviving exactly replaces it -- so this is the
-    number that decides whether a run recovers or slides to extinction.
+    number that decides whether a run recovers or slides to extinction. Tested
+    with the recovery boost off, to isolate the base rate.
     """
-    world = World(config=replace(config, offspring_per_survivor=2.0, carrying_capacity=1000))
-    survivors = world.organisms[:10]
-    world.reproduce_organisms(survivors)
+    steady = replace(config, offspring_per_survivor=2.0, carrying_capacity=1000, recovery_boost=0.0)
+    world = World(config=steady)
+    world.reproduce_organisms(world.organisms[:10])
     assert world.population == 20
+
+
+def test_a_sparse_population_breeds_harder_than_a_crowded_one(config: Settings) -> None:
+    """
+    Density dependence: room to grow means more offspring per survivor.
+
+    Without it a single bad generation is usually fatal -- the population
+    drops, drops again, and never gets the room to climb back.
+    """
+    dense = replace(config, carrying_capacity=100, offspring_per_survivor=2.0, recovery_boost=1.0)
+
+    at_capacity = reproduction.breeding_rate(100, dense)
+    half_full = reproduction.breeding_rate(50, dense)
+    empty = reproduction.breeding_rate(0, dense)
+
+    assert at_capacity == pytest.approx(2.0)
+    assert half_full == pytest.approx(3.0)
+    assert empty == pytest.approx(4.0)
+    assert at_capacity < half_full < empty
+
+
+def test_the_recovery_boost_can_be_switched_off(config: Settings) -> None:
+    """With no boost the rate is flat, whatever the crowding."""
+    flat = replace(config, carrying_capacity=100, offspring_per_survivor=2.0, recovery_boost=0.0)
+    assert reproduction.breeding_rate(0, flat) == pytest.approx(2.0)
+    assert reproduction.breeding_rate(100, flat) == pytest.approx(2.0)
+
+
+def test_recovery_still_cannot_save_a_population_with_no_survivors(config: Settings) -> None:
+    """The boost gives a struggling population room, not immortality."""
+    world = World(config=replace(config, recovery_boost=5.0))
+    world.reproduce_organisms([])
+    assert world.extinct
 
 
 def test_carrying_capacity_caps_a_boom(config: Settings) -> None:
@@ -182,6 +217,83 @@ def test_a_population_can_die_out_over_a_run() -> None:
 # ----------------------------------------------------------------------------
 # The shrinking zone
 # ----------------------------------------------------------------------------
+
+
+def test_each_objective_scales_the_zone_to_its_own_difficulty(config: Settings) -> None:
+    """
+    One setting cannot mean the same thing to a band and to a circle.
+
+    A circle of radius 0.12w covers 4.4% of the grid where a band of width
+    0.12w covers 12%, which is why every objective but the plain ones used to
+    go extinct. Each scales the shared setting to the target it needs.
+    """
+    band = World(config=config, objective="left")
+    circle = World(config=config, objective="centre")
+
+    assert band.zone_fraction == pytest.approx(config.survival_zone_fraction)
+    assert circle.zone_fraction > band.zone_fraction, "a circle needs a bigger fraction"
+
+
+@pytest.mark.parametrize("name", list(OBJECTIVES))
+def test_no_objective_has_a_vanishingly_small_target(name: str, config: Settings) -> None:
+    """
+    Every target has to be big enough to be found by accident at least sometimes.
+
+    Note this is not a check that the areas *match*. Equal area is not equal
+    difficulty: reaching a point in the middle is a harder thing for a brain to
+    compute than heading in one fixed direction, so `centre` is deliberately
+    given more room than `left`. Whether that lands is measured directly by
+    `test_every_objective_is_winnable_from_a_random_start`.
+    """
+    world = World(config=config, n_organisms=2, objective=name)
+    if isinstance(world.objective, Hazard):
+        # Its zone marks danger rather than a goal, so bigger is harder, not
+        # easier, and it is tuned by hazard_radius instead.
+        return
+
+    area = world.objective.zones(world)[-1].mask.mean()
+    assert area > 0.05, f"{name}: target covers only {area:.1%} of the world"
+
+
+def test_two_phase_zones_never_overlap() -> None:
+    """
+    The two halves must stay disjoint, or the objective is degenerate.
+
+    Widening the bands is what makes these winnable, but past a point they meet
+    in the middle and a creature satisfies both by standing still -- which
+    looks like a solved objective and is nothing of the sort.
+    """
+    config = Settings()
+    for name in ("there-and-back", "top-to-bottom"):
+        world = World(config=config, n_organisms=2, objective=name)
+        first, second = (shading.mask for shading in world.objective.zones(world))
+        assert not (first & second).any(), f"{name}: its two zones overlap"
+
+
+@pytest.mark.parametrize("name", list(OBJECTIVES))
+def test_every_objective_is_winnable_from_a_random_start(name: str) -> None:
+    """
+    An unevolved population must survive well enough to get going.
+
+    Below the replacement rate the population shrinks from generation zero and
+    dies before it can learn anything, which is what made most objectives
+    unplayable. This is the check that keeps the difficulty a ladder rather
+    than a cliff, so it deliberately asserts against the real threshold.
+    """
+    config = replace(Settings(), n_organisms=250, steps_per_generation=180)
+    threshold = 1 / reproduction.breeding_rate(0, config)
+
+    shares = []
+    for seed in (1, 2):
+        random.seed(seed)
+        world = World(config=config, objective=name)
+        shares.append(world.run_generation() / config.n_organisms)
+
+    survival = sum(shares) / len(shares)
+    assert survival > threshold, (
+        f"{name}: unevolved survival {survival:.1%} is below the "
+        f"{threshold:.1%} a sparse population needs to grow"
+    )
 
 
 def test_the_zone_contracts_as_generations_pass(config: Settings) -> None:

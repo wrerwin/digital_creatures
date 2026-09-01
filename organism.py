@@ -314,8 +314,9 @@ class World:
         solution that worked early stops working later, down to a floor that
         keeps the target from vanishing entirely.
         """
+        base = self.config.survival_zone_fraction * self.objective.zone_scale
         shrink = (1.0 - self.config.zone_shrink_per_generation) ** self.generation
-        return max(self.config.min_zone_fraction, self.config.survival_zone_fraction * shrink)
+        return max(self.config.min_zone_fraction, base * shrink)
 
     def reset_grid(self, organisms: Iterable[Organism]) -> None:
         """Clear the grid and scatter the given organisms over empty cells."""
@@ -550,7 +551,9 @@ class World:
         or, under sexual reproduction, nobody found a partner -- the population
         is gone and the run is over.
         """
-        children = reproduction.next_generation(survivors, self.strategy, self.config)
+        children = reproduction.next_generation(
+            survivors, self.strategy, self.config, population=self.population
+        )
         if not children:
             self.extinct = True
             self.organisms = []

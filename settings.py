@@ -106,17 +106,37 @@ class Settings:
     weight_jitter: float = 0.4
     """Standard deviation of the nudge applied to a mutated weight."""
 
-    offspring_per_survivor: float = 2.0
+    offspring_per_survivor: float = 4.0
     """
-    How many offspring each breeding survivor leaves.
+    How many offspring each breeding survivor leaves at carrying capacity.
 
-    This is the knife's edge. At 2.0 the population holds steady at exactly 50%
-    survival, grows above it and shrinks below -- so a population that slips
-    even slightly is on its way out.
+    This sets the knife's edge, as 1 / rate: at 4.0 a full population holds
+    steady at 25% survival, and a sparse one at 12.5% because of
+    `recovery_boost`. That band is the point -- above it the population climbs
+    toward capacity, below it it slides toward nothing.
+
+    It was 2.0, demanding 50% survival from generation zero. Measured, an
+    unevolved population manages 22% on the easiest objective and under 4% on
+    the hardest, so nothing but the trivial cases could clear the bar before
+    the population collapsed.
     """
 
     carrying_capacity: int = 400
     """Hard ceiling on population, however well the survivors do."""
+
+    recovery_boost: float = 3.0
+    """
+    How much harder survivors breed when the population is far below capacity.
+
+    At 3.0 a nearly empty world breeds at four times the base rate, tapering to
+    the base rate at capacity. This is what widens the survivable band: the
+    knife's edge stays at 25% survival for a full population, but a struggling
+    one only needs 6.25% to start climbing back.
+
+    Without it a single bad generation was usually fatal -- the population
+    dropped, dropped again, and never got the room to recover -- which is what
+    turned every objective except the easiest into "extinct".
+    """
 
     mating_radius: int = 18
     """
@@ -150,11 +170,21 @@ class Settings:
     min_zone_fraction: float = 0.03
     """Floor the shrinking zone will not contract past."""
 
-    stay_fraction: float = 0.5
-    """For `stay`: the fraction of the generation that must be spent in the zone."""
+    stay_fraction: float = 0.35
+    """
+    For `stay`: the fraction of the generation that must be spent in the zone.
 
-    hazard_radius: float = 12.0
-    """For `hazard`: radius of the roaming danger circle."""
+    The shipped stay objectives pass this explicitly; the default matches them
+    so a hand-built `StayInZone` behaves the same way.
+    """
+
+    hazard_radius: float = 18.0
+    """
+    For `hazard`: radius of the roaming danger circle.
+
+    Widened from 12, where an unevolved population already survived at 53% and
+    the objective was the easiest of the lot rather than one of the harder ones.
+    """
 
     hazard_period: int = 100
     """For `hazard`: timesteps the hazard takes to complete one circuit."""
