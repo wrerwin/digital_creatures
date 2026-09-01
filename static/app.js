@@ -33,6 +33,28 @@ let senseHistory = new Map(); // label -> array of shares, one per generation
 let hoveredLabel = null;
 let pinnedLabel = null;
 
+/*
+ * Recall: frames are archived generation by generation as a run goes, and the
+ * whole archive becomes browsable once it ends.
+ *
+ * A hundred generations at 200 frames each would be some 270MB of pheromone
+ * data, so the archive lives on a frame budget. When it overflows, whole
+ * generations are dropped — but the one dropped is always the most *redundant*,
+ * meaning the one whose neighbours are closest. The first and last are never
+ * dropped. So a long run degrades into an evenly spread sample of itself rather
+ * than keeping only the tail, which preserves what is actually interesting:
+ * being able to compare the beginning against the end.
+ */
+const FRAME_BUDGET = 5000;
+const MAX_FRAMES_PER_GENERATION = 900;
+
+let recording = [];
+let archive = new Map(); // generation number -> frames for that generation
+let archivedFrames = 0;
+let selectedFrames = [];
+let playbackTimer = null;
+let playhead = 0;
+
 // Colours for the zone shadings the objective reports, keyed by the matplotlib
 // colormap name the Python side uses.
 const ZONE_COLOURS = {
@@ -50,19 +72,23 @@ async function init() {
   fillSelect(el("barriers"), options.barriers, options.defaults.barriers);
   fillSelect(el("reproduction"), options.reproduction, options.defaults.reproduction);
 
+  // The skill panels create the brain-size inputs, so they must exist before
+  // the defaults below are written into them.
+  buildSkillDashboard(options);
+
   const numbers = [
     "population", "steps", "generations", "n_genes", "n_inner_neurons",
     "mutation_rate", "initial_energy", "sense_cost", "survival_zone_fraction",
-    "zone_shrink", "offspring_per_survivor", "carrying_capacity", "mating_radius",
+    "zone_shrink", "offspring_per_survivor", "offspring_at_capacity",
+    "carrying_capacity", "mating_radius",
   ];
   for (const name of numbers) {
-    const key = { zone_shrink: "zone_shrink" }[name] || name;
-    if (options.defaults[key] !== undefined) el(name).value = options.defaults[key];
+    if (options.defaults[name] !== undefined) el(name).value = options.defaults[name];
   }
   el("energy_enabled").checked = options.defaults.energy_enabled;
-
-  buildCapabilityList("sensors", options.sensors, true);
-  buildCapabilityList("actions", options.actions, false);
+  el("sense_cost").addEventListener("input", showUpkeep);
+  el("energy_enabled").addEventListener("change", showUpkeep);
+  showUpkeep();
 
   el("mutation_rate").addEventListener("input", showMutationRate);
   el("stride").addEventListener("input", showStride);
@@ -75,10 +101,18 @@ async function init() {
   showShrink();
   showMatingField();
 
+  el("steps").addEventListener("input", showUpkeep);
+  el("initial_energy").addEventListener("input", showUpkeep);
   el("start").addEventListener("click", start);
   el("stop").addEventListener("click", stop);
 
-  wireDropdowns();
+  el("replay-play").addEventListener("click", togglePlayback);
+  el("replay-generation").addEventListener("change", loadRecalledGeneration);
+  el("replay-scrub").addEventListener("input", (event) => {
+    stopPlayback(); // dragging takes over from playback
+    showRecalledFrame(Number(event.target.value));
+  });
+
   connect();
 }
 
@@ -95,41 +129,97 @@ function fillSelect(select, values, chosen) {
 
 /* ----------------------------------------------------- capability menus */
 
-function buildCapabilityList(kind, items, grouped) {
-  const host = el(`${kind}-list`);
+/*
+ * One collapsible panel per category, built from /api/options.
+ *
+ * A capability's category and its tooltip both come from the server, which
+ * reads them off the enums and the sensing functions' own docstrings — so a
+ * new sense appears here, in the right group, correctly explained, with no
+ * change to this file.
+ */
+function buildSkillDashboard(options) {
+  const host = el("skills");
   host.innerHTML = "";
 
-  // Senses are grouped by what they tell a creature; actions are a flat list.
-  const groups = new Map();
-  for (const item of items) {
-    const name = grouped ? item.group : "";
-    if (!groups.has(name)) groups.set(name, []);
-    groups.get(name).push(item);
+  for (const category of options.categories) {
+    const members = options.capabilities.filter((item) => item.category === category.id);
+
+    const group = document.createElement("section");
+    group.className = "skill-group";
+    group.dataset.category = category.id;
+    group.innerHTML = `
+      <button type="button" class="skill-header" aria-expanded="true">
+        <span class="skill-icon">${category.icon}</span>
+        <span class="skill-name">${category.name}</span>
+        <span class="badge" data-count="${category.id}"></span>
+        <span class="chevron" aria-hidden="true"></span>
+      </button>
+      <div class="skill-body">
+        <p class="skill-blurb">${category.blurb}</p>
+        <div class="skill-buttons">
+          <button type="button" data-select="all">enable all</button>
+          <button type="button" data-select="none">disable all</button>
+        </div>
+        <div class="skill-list"></div>
+      </div>`;
+
+    const list = group.querySelector(".skill-list");
+    for (const item of members) list.append(skillRow(item, category.id));
+
+    group.querySelector(".skill-header").addEventListener("click", () => {
+      group.classList.toggle("collapsed");
+      group
+        .querySelector(".skill-header")
+        .setAttribute("aria-expanded", String(!group.classList.contains("collapsed")));
+    });
+
+    for (const button of group.querySelectorAll("[data-select]")) {
+      button.addEventListener("click", () => {
+        const wanted = button.dataset.select === "all";
+        for (const box of group.querySelectorAll("input[type=checkbox]")) box.checked = wanted;
+        updateCounts();
+      });
+    }
+
+    // Brain size belongs with intelligence: it is how much there is to think
+    // with, as opposed to what there is to think about.
+    if (category.id === "intelligence") {
+      const extras = document.createElement("div");
+      extras.className = "brain-size";
+      extras.innerHTML = `
+        <label>Genes<input id="n_genes" type="number" min="1" max="200" step="1" /></label>
+        <label>Inner neurons
+          <input id="n_inner_neurons" type="number" min="1" max="32" step="1" /></label>`;
+      group.querySelector(".skill-body").append(extras);
+    }
+
+    host.append(group);
   }
 
-  for (const [name, members] of groups) {
-    if (name) {
-      const heading = document.createElement("p");
-      heading.className = "group-name";
-      heading.textContent = name;
-      host.append(heading);
-    }
-    for (const item of members) {
-      const label = document.createElement("label");
-      label.className = "check";
+  el("skills-toggle-all").addEventListener("click", toggleAllGroups);
+  updateCounts();
+}
 
-      const box = document.createElement("input");
-      box.type = "checkbox";
-      box.value = item.value;
-      box.checked = true;
-      box.dataset.kind = kind;
-      box.addEventListener("change", () => updateBadge(kind));
+function skillRow(item, categoryId) {
+  const label = document.createElement("label");
+  label.className = "check";
+  label.dataset.tip = item.description;
+  label.title = item.description; // native fallback, and for accessibility
 
-      label.append(box, document.createTextNode(item.label));
-      host.append(label);
-    }
-  }
-  updateBadge(kind);
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.value = item.value;
+  box.checked = true;
+  box.dataset.kind = item.kind;
+  box.dataset.category = categoryId;
+  box.addEventListener("change", updateCounts);
+
+  const name = document.createElement("span");
+  name.className = "check-label";
+  name.textContent = item.label;
+
+  label.append(box, name);
+  return label;
 }
 
 function boxesFor(kind) {
@@ -142,50 +232,59 @@ function selectedValues(kind) {
     .map((box) => Number(box.value));
 }
 
-function updateBadge(kind) {
-  const boxes = boxesFor(kind);
-  const chosen = boxes.filter((box) => box.checked).length;
-  el(`${kind}-count`).textContent = `${chosen}/${boxes.length}`;
+function updateCounts() {
+  for (const badge of document.querySelectorAll("[data-count]")) {
+    const id = badge.dataset.count;
+    const boxes = [...document.querySelectorAll(`input[data-category="${id}"]`)];
+    const chosen = boxes.filter((box) => box.checked).length;
+    badge.textContent = `${chosen}/${boxes.length}`;
+    // A category with nothing enabled is worth flagging: no sensing at all, or
+    // no way to move, means the run cannot start.
+    badge.classList.toggle("empty", chosen === 0);
+  }
+  showUpkeep();
 }
 
-function wireDropdowns() {
-  for (const dropdown of document.querySelectorAll(".dropdown")) {
-    const toggle = dropdown.querySelector(".dropdown-toggle");
-    const menu = dropdown.querySelector(".dropdown-menu");
-
-    toggle.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const opening = menu.hidden;
-      closeAllDropdowns();
-      menu.hidden = !opening;
-      toggle.setAttribute("aria-expanded", String(opening));
-    });
-
-    // Clicks inside the menu must not close it, or ticking several boxes
-    // would mean reopening the menu every time.
-    menu.addEventListener("click", (event) => event.stopPropagation());
+function toggleAllGroups() {
+  const groups = [...document.querySelectorAll(".skill-group")];
+  const collapsing = groups.some((group) => !group.classList.contains("collapsed"));
+  for (const group of groups) {
+    group.classList.toggle("collapsed", collapsing);
+    group.querySelector(".skill-header").setAttribute("aria-expanded", String(!collapsing));
   }
-
-  for (const button of document.querySelectorAll("[data-select]")) {
-    button.addEventListener("click", () => {
-      const kind = button.dataset.target;
-      const checked = button.dataset.select === "all";
-      for (const box of boxesFor(kind)) box.checked = checked;
-      updateBadge(kind);
-    });
-  }
-
-  document.addEventListener("click", closeAllDropdowns);
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeAllDropdowns();
-  });
+  el("skills-toggle-all").textContent = collapsing ? "expand all" : "collapse all";
 }
 
-function closeAllDropdowns() {
-  for (const menu of document.querySelectorAll(".dropdown-menu")) menu.hidden = true;
-  for (const toggle of document.querySelectorAll(".dropdown-toggle")) {
-    toggle.setAttribute("aria-expanded", "false");
+/*
+ * What the current selection would cost to run.
+ *
+ * Upkeep is charged per distinct sense a brain actually wires, so this is the
+ * ceiling rather than a prediction — but it is the number that decides whether
+ * a generous loadout is affordable, and it moves as boxes are ticked.
+ */
+function showUpkeep() {
+  const note = el("upkeep-note");
+  if (!options) return;
+
+  const senses = selectedValues("sensors").length;
+  if (!el("energy_enabled").checked) {
+    note.classList.remove("costly");
+    note.textContent = "Metabolism is off — skills cost nothing to run.";
+    return;
   }
+
+  const perStep =
+    options.defaults.metabolism_base + senses * Number(el("sense_cost").value || 0);
+  const budget = Number(el("initial_energy").value || 0);
+  const steps = Number(el("steps").value || 1);
+  const affordable = perStep * steps <= budget;
+
+  note.classList.toggle("costly", !affordable);
+  note.innerHTML =
+    `A brain wiring all ${senses} senses burns <strong>${perStep.toFixed(2)}</strong>/step, ` +
+    `about <strong>${Math.round(perStep * steps)}</strong> over a generation ` +
+    `of ${steps} steps — against a budget of ${budget}. ` +
+    (affordable ? "Affordable." : "That starves before the end.");
 }
 
 function showMutationRate() {
@@ -244,6 +343,15 @@ function start() {
   hoveredLabel = null;
   pinnedLabel = null;
   drawTimeline();
+
+  // A new run invalidates whatever was recalled from the previous one.
+  stopPlayback();
+  recording = [];
+  archive = new Map();
+  archivedFrames = 0;
+  selectedFrames = [];
+  el("replay").hidden = true;
+
   el("brain").textContent = "Running…";
   setStatus("Starting…");
   setRunning(true);
@@ -266,6 +374,7 @@ function start() {
       survival_zone_fraction: Number(el("survival_zone_fraction").value),
       zone_shrink: Number(el("zone_shrink").value),
       offspring_per_survivor: Number(el("offspring_per_survivor").value),
+      offspring_at_capacity: Number(el("offspring_at_capacity").value),
       carrying_capacity: Number(el("carrying_capacity").value),
       mating_radius: Number(el("mating_radius").value),
       stride: Number(el("stride").value),
@@ -292,9 +401,12 @@ function handle(message) {
       );
       break;
     case "frame":
+      recording.push(message);
+      if (recording.length > MAX_FRAMES_PER_GENERATION) recording.shift();
       drawFrame(message);
       break;
     case "generation":
+      keepForRecall();
       el("gen-value").textContent = message.generation;
       el("survivors-value").textContent =
         `${message.survivors} / ${message.previous_population}`;
@@ -306,21 +418,22 @@ function handle(message) {
         message.populations,
         message.capacity,
         message.lineage_shares,
+        message.thresholds,
       );
       drawExpression(message.expression, message.zone_fraction);
       drawTimeline();
       break;
     case "done":
       setRunning(false);
+      revealRecall();
       setStatus(
-        message.extinct
-          ? "Extinct — nobody left to breed."
-          : "Finished.",
+        message.extinct ? "Extinct — nobody left to breed." : "Finished.",
         Boolean(message.extinct),
       );
       break;
     case "stopped":
       setRunning(false);
+      revealRecall();
       setStatus("Stopped.");
       break;
     case "error":
@@ -380,6 +493,123 @@ function paintMask(image, mask, colour, alphaFromValue) {
   }
 }
 
+/* ------------------------------------------------------------ recall */
+
+/* Archive the generation that just finished. Silent: the controls only appear
+   once the whole run is over, so they do not churn while it is going. */
+function keepForRecall() {
+  if (!recording.length) return;
+
+  // Frames carry the generation they belong to; the generation message counts
+  // completed generations, so it is one ahead. Trust the frames.
+  const number = recording[0].generation;
+  archive.set(number, recording);
+  archivedFrames += recording.length;
+  recording = [];
+  pruneArchive();
+}
+
+function pruneArchive() {
+  while (archivedFrames > FRAME_BUDGET && archive.size > 2) {
+    const generations = [...archive.keys()].sort((a, b) => a - b);
+
+    // Drop whichever interior generation sits in the most crowded stretch, so
+    // what remains stays spread across the whole run.
+    let victim = generations[1];
+    let closest = Infinity;
+    for (let i = 1; i < generations.length - 1; i += 1) {
+      const gap = generations[i + 1] - generations[i - 1];
+      if (gap < closest) {
+        closest = gap;
+        victim = generations[i];
+      }
+    }
+
+    archivedFrames -= archive.get(victim).length;
+    archive.delete(victim);
+  }
+}
+
+/* Reveal the archive once the run has stopped, not during it. */
+function revealRecall() {
+  keepForRecall(); // a generation cut short mid-run is still worth keeping
+
+  const bar = el("replay");
+  bar.hidden = archive.size === 0;
+  if (bar.hidden) return;
+
+  const generations = [...archive.keys()].sort((a, b) => a - b);
+  const picker = el("replay-generation");
+  picker.innerHTML = "";
+  for (const number of generations) {
+    const option = document.createElement("option");
+    option.value = String(number);
+    option.textContent = `Generation ${number + 1}`;
+    picker.append(option);
+  }
+
+  const span = generations[generations.length - 1] - generations[0] + 1;
+  el("replay-note").textContent =
+    archive.size < span
+      ? `${archive.size} of ${span} kept — sampled to fit memory`
+      : `${archive.size} generation${archive.size === 1 ? "" : "s"}`;
+
+  // Open on the last generation: the one the run ended on.
+  picker.value = String(generations[generations.length - 1]);
+  loadRecalledGeneration();
+}
+
+function loadRecalledGeneration() {
+  stopPlayback();
+  selectedFrames = archive.get(Number(el("replay-generation").value)) || [];
+  const scrub = el("replay-scrub");
+  scrub.max = String(Math.max(0, selectedFrames.length - 1));
+
+  // Park on the final frame: the state selection actually acted on.
+  showRecalledFrame(selectedFrames.length - 1);
+}
+
+function describePlayhead() {
+  const frame = selectedFrames[playhead];
+  if (!frame) return;
+  el("replay-label").textContent =
+    `gen ${frame.generation + 1} · step ${frame.step} · ${frame.alive} alive`;
+}
+
+function showRecalledFrame(index) {
+  if (!selectedFrames.length) return;
+  playhead = Math.max(0, Math.min(selectedFrames.length - 1, index));
+  el("replay-scrub").value = String(playhead);
+  drawFrame(selectedFrames[playhead]);
+  describePlayhead();
+}
+
+function togglePlayback() {
+  if (playbackTimer !== null) {
+    stopPlayback();
+    return;
+  }
+  if (!selectedFrames.length) return;
+
+  // Starting from the end would replay nothing, so rewind first.
+  if (playhead >= selectedFrames.length - 1) playhead = 0;
+
+  el("replay-play").textContent = "❚❚";
+  playbackTimer = window.setInterval(() => {
+    if (playhead >= selectedFrames.length - 1) {
+      stopPlayback();
+      return;
+    }
+    showRecalledFrame(playhead + 1);
+  }, 40);
+}
+
+function stopPlayback() {
+  if (playbackTimer !== null) window.clearInterval(playbackTimer);
+  playbackTimer = null;
+  el("replay-play").textContent = "▶";
+}
+
 function drawFrame(message) {
   if (!layers) return;
   const { width, height } = layers;
@@ -425,7 +655,7 @@ function resetChart() {
   chartCtx.clearRect(0, 0, chart.width, chart.height);
 }
 
-function drawChart(history, populations, capacity, lineageShares) {
+function drawChart(history, populations, capacity, lineageShares, thresholds) {
   const { width, height } = chart;
   const pad = 26;
   chartCtx.clearRect(0, 0, width, height);
@@ -446,18 +676,6 @@ function drawChart(history, populations, capacity, lineageShares) {
     chartCtx.fillText(`${Math.round(fraction * 100)}%`, 2, y + 3);
   }
 
-  // The replacement line: survive at less than this and the population shrinks.
-  const replacement = 1 / Number(el("offspring_per_survivor").value || 2);
-  if (replacement > 0 && replacement <= 1) {
-    chartCtx.strokeStyle = "#7a5c2e";
-    chartCtx.setLineDash([4, 4]);
-    chartCtx.beginPath();
-    chartCtx.moveTo(pad, toY(replacement));
-    chartCtx.lineTo(width - 6, toY(replacement));
-    chartCtx.stroke();
-    chartCtx.setLineDash([]);
-  }
-
   if (!history.length) return;
   const span = Math.max(history.length - 1, 1);
 
@@ -473,6 +691,14 @@ function drawChart(history, populations, capacity, lineageShares) {
     });
     chartCtx.stroke();
   };
+
+  // The bar each generation had to clear. It rises as the world fills, so
+  // where the survival line crosses it is exactly where the population turns.
+  if (thresholds && thresholds.length) {
+    chartCtx.setLineDash([4, 4]);
+    line(thresholds, "#c08a4a", 1);
+    chartCtx.setLineDash([]);
+  }
 
   if (populations && capacity) line(populations, "#4ec9a0", 1 / capacity);
   if (lineageShares) line(lineageShares, "#c98ae0", 1);

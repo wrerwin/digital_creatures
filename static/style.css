@@ -109,104 +109,159 @@ input[type="range"] {
   gap: 0.6rem;
 }
 
-/* Capabilities dropdown ---------------------------------------------------- */
+/* Skill dashboard ---------------------------------------------------------- */
 
-.dropdown {
-  position: relative;
-  margin-bottom: 0.75rem;
-}
-
-.dropdown-toggle {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  background: #14161f;
-  color: var(--ink);
-  border: 1px solid var(--panel-edge);
-  border-radius: 6px;
-  font: inherit;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-
-.dropdown-toggle::after {
-  content: "▾";
+h2 .link-button {
+  float: right;
+  padding: 0;
+  background: none;
+  border: 0;
   color: var(--ink-dim);
+  font: inherit;
+  font-size: 0.68rem;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
-.dropdown-toggle:hover {
-  border-color: var(--accent);
+h2 .link-button:hover {
+  color: var(--accent);
 }
 
 .badge {
-  margin-left: auto;
-  padding: 0.05rem 0.4rem;
+  padding: 0.05rem 0.45rem;
   border-radius: 999px;
   background: #262a38;
   color: var(--ink-dim);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
 }
 
-.dropdown-menu {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  max-height: 320px;
-  overflow-y: auto;
-  padding: 0.5rem;
-  background: #171922;
+.badge.empty {
+  background: #4a2530;
+  color: #ff9a8a;
+}
+
+.skills {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.skill-group {
   border: 1px solid var(--panel-edge);
   border-radius: 8px;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  background: #171922;
+  overflow: hidden;
 }
 
-.dropdown-actions {
+.skill-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: #1b1e29;
+  color: var(--ink);
+  border: 0;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.skill-header:hover {
+  background: #21242f;
+}
+
+.skill-icon {
+  width: 1.1rem;
+  color: var(--accent);
+  text-align: center;
+}
+
+.skill-name {
+  flex: 1;
+}
+
+/* Drawn with borders rather than a glyph: the arrow characters are missing
+   from some system fonts and render as a stray dash. */
+.chevron {
+  flex: none;
+  width: 0;
+  height: 0;
+  margin-left: 0.15rem;
+  border-left: 4.5px solid transparent;
+  border-right: 4.5px solid transparent;
+  border-top: 5.5px solid var(--ink-dim);
+  transition: transform 0.15s ease;
+}
+
+.skill-header:hover .chevron {
+  border-top-color: var(--ink);
+}
+
+.skill-group.collapsed .chevron {
+  transform: rotate(-90deg);
+}
+
+.skill-group.collapsed .skill-body {
+  display: none;
+}
+
+.skill-body {
+  padding: 0.5rem 0.6rem 0.6rem;
+}
+
+.skill-blurb {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--ink-dim);
+}
+
+.skill-buttons {
   display: flex;
   gap: 0.4rem;
-  padding-bottom: 0.4rem;
-  margin-bottom: 0.4rem;
-  border-bottom: 1px solid var(--panel-edge);
+  margin-bottom: 0.45rem;
 }
 
-.dropdown-actions button {
+.skill-buttons button {
   flex: 1;
-  padding: 0.25rem;
+  padding: 0.2rem;
   background: #21242f;
   color: var(--ink-dim);
   border: 1px solid var(--panel-edge);
   border-radius: 5px;
   font: inherit;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   cursor: pointer;
 }
 
-.dropdown-actions button:hover {
+.skill-buttons button:hover {
   color: var(--ink);
   border-color: var(--accent);
 }
 
-.group-name {
-  margin: 0.5rem 0 0.25rem;
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: #6f7488;
+.skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .check {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.5rem;
   margin: 0;
-  padding: 0.2rem 0.25rem;
+  padding: 0.22rem 0.3rem;
   border-radius: 5px;
   color: var(--ink);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   cursor: pointer;
 }
 
@@ -217,6 +272,76 @@ input[type="range"] {
 .check input {
   accent-color: var(--accent);
   margin: 0;
+  flex: none;
+}
+
+.check input:not(:checked) + .check-label {
+  color: #6f7488;
+  text-decoration: line-through;
+  text-decoration-color: #4a4f63;
+}
+
+/* Tooltips ---------------------------------------------------------------- */
+
+.check[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 40;
+  left: 0.5rem;
+  top: calc(100% + 2px);
+  width: 240px;
+  padding: 0.45rem 0.55rem;
+  background: #0c0d13;
+  color: var(--ink);
+  border: 1px solid var(--panel-edge);
+  border-radius: 6px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease 0.25s;
+}
+
+.check[data-tip]:hover::after,
+.check[data-tip]:focus-within::after {
+  opacity: 1;
+}
+
+.brain-size {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--panel-edge);
+}
+
+.brain-size label {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.upkeep {
+  margin: 0 0 0.75rem;
+  padding: 0.4rem 0.5rem;
+  background: #14161f;
+  border: 1px solid var(--panel-edge);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--ink-dim);
+}
+
+.upkeep strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.upkeep.costly strong {
+  color: #ffb27a;
 }
 
 /* Buttons and status ------------------------------------------------------- */
@@ -285,6 +410,79 @@ input[type="range"] {
   border-radius: 8px;
 }
 
+/* Replaying the last generation ------------------------------------------- */
+
+.replay {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.45rem 0.5rem;
+  background: #14161f;
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+}
+
+.replay-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.replay-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  flex: 1;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.replay-pick select {
+  flex: 1;
+  margin-top: 0;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.82rem;
+}
+
+.replay-note {
+  flex: none;
+  font-size: 0.7rem;
+  color: #6f7488;
+}
+
+.replay-button {
+  flex: none;
+  width: 2rem;
+  height: 1.7rem;
+  background: #21242f;
+  color: var(--ink);
+  border: 1px solid var(--panel-edge);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.replay-button:hover {
+  border-color: var(--accent);
+}
+
+.replay input[type="range"] {
+  flex: 1;
+  margin: 0;
+}
+
+.replay-label {
+  flex: none;
+  min-width: 9.5rem;
+  text-align: right;
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 .readouts {
   display: flex;
   gap: 1.5rem;
@@ -345,6 +543,10 @@ input[type="range"] {
 
 .key.lineage {
   background: #c98ae0;
+}
+
+.key.threshold {
+  background: repeating-linear-gradient(90deg, #c08a4a 0 4px, transparent 4px 7px);
 }
 
 /* Sense history ------------------------------------------------------------ */

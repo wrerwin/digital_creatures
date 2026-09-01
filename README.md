@@ -21,8 +21,26 @@ random noise; watch the survival percentage climb.
 
 The browser configures a run; the server streams it back a frame at a time.
 Alongside the world settings — objective, obstacles, population, generations,
-seed — two dropdowns of checkboxes control **what the creatures are allowed to
-be**: which senses and which actions evolution may wire up.
+seed — a **skill dashboard** controls what the creatures are allowed to be.
+
+Skills are split into three collapsible panels, because they answer three
+different questions:
+
+| panel | question | holds |
+| --- | --- | --- |
+| **Sensing** | what can it perceive of the world? | position, walls, neighbours, obstacles, scent |
+| **Moving** | what can it do in the world? | the seven actions, including laying scent |
+| **Intelligence** | what does it know about itself? | previous movement, age, energy, noise, a constant — plus genome size and inner-neuron count |
+
+Every skill carries a tooltip, and for senses that text is the sensing
+function's **own docstring**, so what a user reads cannot drift away from what
+the code does. Each panel shows how many of its skills are enabled, and turns
+red when a panel is emptied.
+
+Underneath, a running estimate of what the selection costs to run: a brain
+wiring all 19 senses burns 0.86 energy per step, about 172 over a 200-step
+generation — against a budget of 140, so it starves. Turning senses off is not
+only a restriction, it is a discount.
 
 Switching a capability off removes it from the search space entirely. No new
 gene will target it, so whatever behaviour depended on it has to be found some
@@ -34,9 +52,27 @@ produce trail-following.
 Changing the controls and pressing Run abandons whatever is in flight and
 starts over, so it stays responsive while a long run is going.
 
+**Recall.** Frames are archived generation by generation as a run goes, and the
+whole archive becomes browsable once it ends — pick any generation from the
+dropdown, then play or scrub through it frame by frame. Stopping a run early
+works too, and keeps the part-finished generation.
+
+Each generation opens on its final frame, which is the state selection actually
+acted on, so you can wind back and watch how those survivors got there. Being
+able to put generation 1 next to generation 40 is the point: it is the
+difference between seeing what evolved and seeing it evolve.
+
+The archive lives on a frame budget of about 5,000. Long runs overflow it, and
+when they do whole generations are dropped — but always the most *redundant*
+one, meaning whichever sits in the most crowded stretch, and never the first or
+last. A 120-generation run reduces to an evenly spread sample of 50 rather than
+just the tail, so the beginning is still there to compare against the end. The
+control says so when it has sampled.
+
 Every menu is built from `/api/options`, which reads the enums and registries
 directly — a new sense, action, objective or barrier layout appears in the
-browser with no front-end change.
+browser, in the right panel and correctly explained, with no front-end change.
+A sense's panel comes from `SENSOR_CATEGORY` in `capability_utils.py`.
 
 ## How it works
 
@@ -60,11 +96,41 @@ over thirty generations. Run out of energy and you starve mid-generation.
 breeding survivor leaves offspring, capped by the carrying capacity, and the
 population can reach zero — which ends the run.
 
-The rate is **density-dependent**, which is both how real populations behave
-and what keeps one bad generation from being automatically fatal. A full
-population needs 25% survival to hold its ground; a struggling one needs only
-6.25% to start climbing back. That band is the edge, and the dashed line on the
-survival chart marks where you currently sit relative to it.
+The rate is **density-dependent**, decaying geometrically from 14 offspring per
+survivor in an empty world to 1.15 at the carrying capacity. So the bar for
+holding your ground climbs as the world fills — from 7% survival when the
+population has crashed to 87% when it is full. Cheap to recover, expensive to
+stay full.
+
+A population therefore settles wherever its survival rate meets that rising
+bar, and drifts as survival does. The dashed line on the survival chart is the
+bar itself: where the survival line crosses it is exactly where the population
+turns around.
+
+Measured across every objective — three seeds each, 30 generations, capacity
+400, sampled from generation 10 once the population has settled:
+
+| objective | population range | swing | generations at the cap |
+| --- | --- | --- | --- |
+| `there-and-back` | 213 – 400 | 154 | 7% |
+| `top-to-bottom` | 217 – 400 | 135 | 2% |
+| `hazard` | 267 – 400 | 123 | 38% |
+| `corners` | 285 – 400 | 111 | 40% |
+| `stay-centre` | 179 – 311 | 106 | 0% |
+| `centre` | 182 – 329 | 102 | 0% |
+| `stay` | 392 – 400 | 4 | 92% |
+| `left` | 393 – 400 | 4 | 95% |
+| `right` | 382 – 400 | 6 | 92% |
+
+Nothing went extinct in any of the 27 runs, and every objective dips hard in
+the first generation or two — as low as 62 — before climbing back out.
+
+**Three objectives still pin: `left`, `right` and `stay`.** Their evolved
+survival exceeds even the 87% demanded at capacity, so nothing stops them
+filling the world. That is the honest limit of this mechanism: an objective a
+population solves *completely* will always saturate, and the fluctuation lives
+in the six that stay hard. To get movement on an easy one, raise "offspring
+when full" toward 1.0 until even that survival rate is marginal.
 
 **A shrinking target.** Optionally the survival zone contracts each generation,
 so a solution that worked at generation 10 stops working by 50. Worth knowing:
@@ -122,6 +188,10 @@ Every organism's wiring can be read back as text, or drawn with `--draw-brain`:
 border_distance --(-2.13)--> move_x
 inner_2 --(+1.44)--> move_forward
 ```
+
+**[BRAIN.md](BRAIN.md) explains the whole mechanism** — how the network is put
+together, how a genome becomes behaviour in one timestep, how the senses feed
+into it, and what evolution is actually doing across generations.
 
 ## What a creature can sense
 
@@ -269,6 +339,7 @@ world = World(config=config, objective="there-and-back")
 
 | file | what's in it |
 | --- | --- |
+| `BRAIN.md` | how the neural network, the senses and the evolution actually work |
 | `settings.py` | `Settings`, a frozen dataclass holding every tunable number |
 | `capability_utils.py` | the `Sensor` and `Action` enums — what a creature can perceive and do |
 | `brain_utils.py` | genes, mutation, and the network a genome builds |
@@ -288,7 +359,7 @@ world = World(config=config, objective="there-and-back")
 
 ```bash
 uv sync                 # create the environment
-uv run pytest           # 153 invariant checks
+uv run pytest           # 156 invariant checks
 uv run ruff check .     # lint
 uv run ruff format .    # format
 ```

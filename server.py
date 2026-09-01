@@ -30,9 +30,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import barriers
+import capability_utils
 import population_stats
 import reproduction
-from capability_utils import Action, Sensor
+from capability_utils import Action, Category, Sensor
 from objectives import OBJECTIVES
 from organism import World
 from settings import Settings
@@ -78,11 +79,27 @@ async def options() -> dict[str, Any]:
         "objectives": list(OBJECTIVES),
         "barriers": sorted(barriers.LAYOUTS),
         "reproduction": list(reproduction.STRATEGIES),
-        "sensors": [
-            {"value": int(sensor), "label": str(sensor), "group": _sensor_group(sensor)}
-            for sensor in Sensor
+        "capabilities": capability_utils.catalogue(),
+        "categories": [
+            {
+                "id": str(Category.SENSING),
+                "name": "Sensing",
+                "icon": "◎",
+                "blurb": "What it can perceive of the world around it.",
+            },
+            {
+                "id": str(Category.MOVING),
+                "name": "Moving",
+                "icon": "➤",
+                "blurb": "What it can do in the world.",
+            },
+            {
+                "id": str(Category.INTELLIGENCE),
+                "name": "Intelligence",
+                "icon": "✦",
+                "blurb": "What it knows about itself, and how much brain it has to think with.",
+            },
         ],
-        "actions": [{"value": int(action), "label": str(action)} for action in Action],
         "defaults": {
             "objective": "left",
             "barriers": defaults.barrier_layout,
@@ -96,25 +113,15 @@ async def options() -> dict[str, Any]:
             "energy_enabled": defaults.energy_enabled,
             "initial_energy": defaults.initial_energy,
             "sense_cost": defaults.sense_cost,
+            "metabolism_base": defaults.metabolism,
             "survival_zone_fraction": defaults.survival_zone_fraction,
             "zone_shrink": defaults.zone_shrink_per_generation,
             "offspring_per_survivor": defaults.offspring_per_survivor,
+            "offspring_at_capacity": defaults.offspring_at_capacity,
             "carrying_capacity": defaults.carrying_capacity,
             "mating_radius": defaults.mating_radius,
         },
     }
-
-
-def _sensor_group(sensor: Sensor) -> str:
-    """Which heading a sense sits under in the capabilities menu."""
-    name = sensor.name
-    if name.startswith("PHEROMONE"):
-        return "what can I smell"
-    if name.startswith(("NEIGHBOUR", "BLOCKED", "POPULATION")):
-        return "what is around me"
-    if name.startswith(("X_", "Y_", "BORDER")):
-        return "where am I"
-    return "what was I doing"
 
 
 # ----------------------------------------------------------------------------
@@ -176,7 +183,10 @@ def build_settings(payload: dict[str, Any]) -> Settings:
         ),
         zone_shrink_per_generation=_clamp_float(payload.get("zone_shrink"), 0.0, 0.5, 0.0),
         offspring_per_survivor=_clamp_float(
-            payload.get("offspring_per_survivor"), 0.1, 20.0, defaults.offspring_per_survivor
+            payload.get("offspring_per_survivor"), 0.1, 100.0, defaults.offspring_per_survivor
+        ),
+        offspring_at_capacity=_clamp_float(
+            payload.get("offspring_at_capacity"), 0.05, 100.0, defaults.offspring_at_capacity
         ),
         # Capped below the grid size, or a generation could have nowhere to stand.
         carrying_capacity=_clamp_int(
@@ -278,6 +288,7 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
     history: list[float] = []
     populations: list[int] = []
     lineage_shares: list[float] = []
+    thresholds: list[float] = []
 
     for _ in range(config.n_generations):
         before = world.population
@@ -302,6 +313,8 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
         history.append(survivors / max(before, 1))
         populations.append(world.population)
         lineage_shares.append(expression["lineages"]["remaining"])
+        # The bar this generation had to clear, which rises as the world fills.
+        thresholds.append(reproduction.replacement_threshold(before, config))
         await websocket.send_json(
             {
                 "type": "generation",
@@ -314,6 +327,7 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
                 "history": history,
                 "populations": populations,
                 "lineage_shares": lineage_shares,
+                "thresholds": thresholds,
                 "expression": expression,
                 "brain": world.organisms[0].brain.describe() if world.organisms else "",
             }

@@ -62,16 +62,24 @@
           <input id="zone_shrink" type="range" min="0" max="0.05" step="0.002" />
         </label>
 
+        <!-- The two ends of the density-dependent breeding curve. The gap
+             between them is what makes the population move: cheap to recover
+             from a crash, expensive to keep a full world full. -->
         <div class="row">
-          <label>
-            Offspring / survivor
-            <input id="offspring_per_survivor" type="number" min="0.1" max="20" step="0.1" />
+          <label title="Offspring per survivor in an empty world — the recovery rate">
+            Offspring when empty
+            <input id="offspring_per_survivor" type="number" min="0.1" max="100" step="0.5" />
           </label>
-          <label>
-            Carrying capacity
-            <input id="carrying_capacity" type="number" min="2" max="5000" step="50" />
+          <label title="Offspring per survivor at carrying capacity — near 1.0 keeps the population on a knife's edge">
+            Offspring when full
+            <input id="offspring_at_capacity" type="number" min="0.05" max="100" step="0.05" />
           </label>
         </div>
+
+        <label>
+          Carrying capacity
+          <input id="carrying_capacity" type="number" min="2" max="5000" step="50" />
+        </label>
 
         <label class="check standalone">
           <input id="energy_enabled" type="checkbox" checked />
@@ -89,7 +97,7 @@
           </label>
         </div>
 
-        <h2>The creatures</h2>
+        <h2>Breeding</h2>
 
         <label>
           Reproduction
@@ -101,51 +109,22 @@
           <input id="mating_radius" type="number" min="1" max="200" step="1" />
         </label>
 
-        <div class="row">
-          <label>
-            Genes
-            <input id="n_genes" type="number" min="1" max="200" step="1" />
-          </label>
-          <label>
-            Inner neurons
-            <input id="n_inner_neurons" type="number" min="1" max="32" step="1" />
-          </label>
-        </div>
-
         <label>
           Mutation rate <span class="hint" id="mutation_label"></span>
           <input id="mutation_rate" type="range" min="0" max="0.2" step="0.005" />
         </label>
 
-        <!-- The capabilities menus: a dropdown holding checkboxes, so a run can
-             be given a deliberately restricted creature. -->
-        <div class="dropdown" id="sensors-dropdown">
-          <button type="button" class="dropdown-toggle" aria-expanded="false">
-            <span>Senses</span>
-            <span class="badge" id="sensors-count"></span>
-          </button>
-          <div class="dropdown-menu" hidden>
-            <div class="dropdown-actions">
-              <button type="button" data-select="all" data-target="sensors">all</button>
-              <button type="button" data-select="none" data-target="sensors">none</button>
-            </div>
-            <div id="sensors-list"></div>
-          </div>
-        </div>
+        <!-- The skill dashboard. Every capability a creature may evolve, grouped
+             by what it is for. Switching one off removes it from the search
+             space: no gene will ever target it. Built from /api/options. -->
+        <h2>
+          Creature skills
+          <button type="button" id="skills-toggle-all" class="link-button">collapse all</button>
+        </h2>
 
-        <div class="dropdown" id="actions-dropdown">
-          <button type="button" class="dropdown-toggle" aria-expanded="false">
-            <span>Actions</span>
-            <span class="badge" id="actions-count"></span>
-          </button>
-          <div class="dropdown-menu" hidden>
-            <div class="dropdown-actions">
-              <button type="button" data-select="all" data-target="actions">all</button>
-              <button type="button" data-select="none" data-target="actions">none</button>
-            </div>
-            <div id="actions-list"></div>
-          </div>
-        </div>
+        <div class="skills" id="skills"></div>
+
+        <p class="upkeep" id="upkeep-note"></p>
 
         <label>
           Speed <span class="hint" id="stride_label"></span>
@@ -162,6 +141,24 @@
 
       <section class="stage">
         <canvas id="world" width="600" height="600"></canvas>
+
+        <!-- Recall: frames are archived generation by generation while a run
+             goes, and the whole archive becomes browsable once it ends. -->
+        <div class="replay" id="replay" hidden>
+          <div class="replay-row">
+            <label class="replay-pick">
+              Recall
+              <select id="replay-generation"></select>
+            </label>
+            <span class="replay-note" id="replay-note"></span>
+          </div>
+          <div class="replay-row">
+            <button type="button" id="replay-play" class="replay-button">▶</button>
+            <input id="replay-scrub" type="range" min="0" max="0" value="0" />
+            <span class="replay-label" id="replay-label">—</span>
+          </div>
+        </div>
+
         <div class="readouts">
           <div class="readout"><span id="gen-value">—</span><label>generation</label></div>
           <div class="readout"><span id="alive-value">—</span><label>alive</label></div>
@@ -177,6 +174,7 @@
           <span class="key survival"></span> share surviving
           <span class="key population"></span> population vs capacity
           <span class="key lineage"></span> lineages vs founders
+          <span class="key threshold"></span> survival needed to hold
         </p>
 
         <details class="expression" open>

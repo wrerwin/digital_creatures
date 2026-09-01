@@ -130,53 +130,95 @@ def test_the_energy_sense_reports_the_tank(config: Settings) -> None:
 
 def test_population_grows_and_shrinks_with_survival(config: Settings) -> None:
     """
-    The knife's edge: `offspring_per_survivor` sets the replacement rate.
+    The base case: with a flat rate, ten survivors at two young each make twenty.
 
-    At 2.0, half the population surviving exactly replaces it -- so this is the
-    number that decides whether a run recovers or slides to extinction. Tested
-    with the recovery boost off, to isolate the base rate.
+    Density dependence is switched off here by making the two ends of the
+    curve equal, so only the multiplication is under test.
     """
-    steady = replace(config, offspring_per_survivor=2.0, carrying_capacity=1000, recovery_boost=0.0)
+    steady = replace(
+        config,
+        offspring_per_survivor=2.0,
+        offspring_at_capacity=2.0,
+        carrying_capacity=1000,
+    )
     world = World(config=steady)
     world.reproduce_organisms(world.organisms[:10])
     assert world.population == 20
 
 
-def test_a_sparse_population_breeds_harder_than_a_crowded_one(config: Settings) -> None:
+def test_breeding_slows_as_the_world_fills(config: Settings) -> None:
     """
-    Density dependence: room to grow means more offspring per survivor.
+    Density dependence: the emptier the world, the more each survivor leaves.
 
-    Without it a single bad generation is usually fatal -- the population
-    drops, drops again, and never gets the room to climb back.
+    The two ends are exact by construction, and the decay between them is
+    monotonic -- which is what makes a population settle somewhere rather than
+    running to the cap and being clamped flat against it.
     """
-    dense = replace(config, carrying_capacity=100, offspring_per_survivor=2.0, recovery_boost=1.0)
+    dense = replace(
+        config,
+        carrying_capacity=100,
+        offspring_per_survivor=16.0,
+        offspring_at_capacity=1.0,
+    )
 
-    at_capacity = reproduction.breeding_rate(100, dense)
-    half_full = reproduction.breeding_rate(50, dense)
     empty = reproduction.breeding_rate(0, dense)
+    half_full = reproduction.breeding_rate(50, dense)
+    at_capacity = reproduction.breeding_rate(100, dense)
 
-    assert at_capacity == pytest.approx(2.0)
-    assert half_full == pytest.approx(3.0)
-    assert empty == pytest.approx(4.0)
+    assert empty == pytest.approx(16.0)
+    assert at_capacity == pytest.approx(1.0)
     assert at_capacity < half_full < empty
+    assert half_full == pytest.approx(4.0)  # geometric midpoint of 16 and 1
 
 
-def test_the_recovery_boost_can_be_switched_off(config: Settings) -> None:
-    """With no boost the rate is flat, whatever the crowding."""
-    flat = replace(config, carrying_capacity=100, offspring_per_survivor=2.0, recovery_boost=0.0)
-    assert reproduction.breeding_rate(0, flat) == pytest.approx(2.0)
-    assert reproduction.breeding_rate(100, flat) == pytest.approx(2.0)
+def test_crowding_beyond_capacity_does_not_reverse_the_rate(config: Settings) -> None:
+    """An over-full world is as harsh as a full one, never harsher-than-zero."""
+    dense = replace(
+        config, carrying_capacity=100, offspring_per_survivor=16.0, offspring_at_capacity=1.0
+    )
+    assert reproduction.breeding_rate(500, dense) == pytest.approx(1.0)
+    assert reproduction.breeding_rate(500, dense) > 0
+
+
+def test_the_replacement_threshold_rises_with_the_population(config: Settings) -> None:
+    """
+    The bar for holding your ground climbs as the world fills.
+
+    This is the line the survival chart draws; where survival crosses it is
+    exactly where the population turns around.
+    """
+    dense = replace(
+        config, carrying_capacity=100, offspring_per_survivor=16.0, offspring_at_capacity=1.0
+    )
+    assert reproduction.replacement_threshold(0, dense) == pytest.approx(1 / 16)
+    assert reproduction.replacement_threshold(100, dense) == pytest.approx(1.0)
+    assert reproduction.replacement_threshold(0, dense) < reproduction.replacement_threshold(
+        50, dense
+    )
 
 
 def test_recovery_still_cannot_save_a_population_with_no_survivors(config: Settings) -> None:
-    """The boost gives a struggling population room, not immortality."""
-    world = World(config=replace(config, recovery_boost=5.0))
+    """A generous recovery rate gives a struggling population room, not immortality."""
+    world = World(config=replace(config, offspring_per_survivor=50.0))
     world.reproduce_organisms([])
     assert world.extinct
 
 
 def test_carrying_capacity_caps_a_boom(config: Settings) -> None:
-    world = World(config=replace(config, offspring_per_survivor=10.0, carrying_capacity=25))
+    """
+    However well a generation goes, the world cannot hold more than its capacity.
+
+    Both ends of the breeding curve are set high so a boom really happens:
+    left at the default, an over-full world would already be breeding at the
+    capacity rate and never reach the cap at all.
+    """
+    boom = replace(
+        config,
+        offspring_per_survivor=10.0,
+        offspring_at_capacity=10.0,
+        carrying_capacity=25,
+    )
+    world = World(config=boom)
     world.reproduce_organisms(world.organisms[:20])
     assert world.population == 25
 

@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 import barriers
 import reproduction
-from capability_utils import Action, Sensor
+from capability_utils import Action, Category, Sensor
 from objectives import OBJECTIVES
 from server import app, build_settings
 from settings import Settings
@@ -49,7 +49,8 @@ def full_payload(**overrides: Any) -> dict[str, Any]:
         "sense_cost": 0.04,
         "survival_zone_fraction": 0.12,
         "zone_shrink": 0.0,
-        "offspring_per_survivor": 2.0,
+        "offspring_per_survivor": 14.0,
+        "offspring_at_capacity": 1.15,
         "carrying_capacity": 400,
         "mating_radius": 18,
         "stride": 1,
@@ -68,26 +69,66 @@ def full_payload(**overrides: Any) -> dict[str, Any]:
 
 def test_options_expose_every_capability(client: TestClient) -> None:
     """
-    The UI builds its menus from this, so anything missing is invisible forever.
+    The UI builds its dashboard from this, so anything missing is invisible forever.
 
     A new sense added to the enum should appear in the browser with no
     front-end change at all, which only holds if this is derived and not typed
     out by hand.
     """
     options = client.get("/api/options").json()
+    labels = [item["label"] for item in options["capabilities"]]
 
-    assert [item["label"] for item in options["sensors"]] == [str(s) for s in Sensor]
-    assert [item["label"] for item in options["actions"]] == [str(a) for a in Action]
+    assert labels == [str(s) for s in Sensor] + [str(a) for a in Action]
     assert options["objectives"] == list(OBJECTIVES)
     assert options["barriers"] == sorted(barriers.LAYOUTS)
     assert options["reproduction"] == list(reproduction.STRATEGIES)
 
 
-def test_every_sensor_gets_a_menu_heading(client: TestClient) -> None:
-    """An ungrouped sense would silently fall into the wrong section of the menu."""
+def test_every_capability_lands_in_a_declared_category(client: TestClient) -> None:
+    """
+    A capability whose category has no panel would vanish from the dashboard.
+
+    The UI filters the catalogue by category id, so a typo or a missing entry
+    means the skill is silently unreachable rather than visibly broken.
+    """
     options = client.get("/api/options").json()
-    for item in options["sensors"]:
-        assert item["group"], f"{item['label']} has no group"
+    declared = {category["id"] for category in options["categories"]}
+
+    assert declared == {str(member) for member in Category}
+    for item in options["capabilities"]:
+        assert item["category"] in declared, f"{item['label']} has no panel to sit in"
+
+
+def test_every_capability_carries_a_tooltip(client: TestClient) -> None:
+    """The dashboard is only intuitive if every skill explains itself."""
+    options = client.get("/api/options").json()
+    for item in options["capabilities"]:
+        description = item["description"]
+        assert description, f"{item['label']} has no description"
+        # A whole sentence, on one line, short enough to read in a tooltip.
+        # Not checked for a capital: several legitimately start with a number.
+        assert description.endswith("."), f"{item['label']}: {description!r} is not a sentence"
+        assert "\n" not in description, f"{item['label']}: description spans lines"
+        assert len(description) < 200, f"{item['label']}: tooltip too long"
+
+
+def test_sensors_and_actions_stay_distinguishable(client: TestClient) -> None:
+    """
+    Sensors span two categories, so the payload is assembled by `kind`, not panel.
+
+    Losing this distinction would send sensor ids in the actions list, which
+    the server would then quietly clamp into the wrong capabilities.
+    """
+    options = client.get("/api/options").json()
+    by_kind: dict[str, list[str]] = {"sensors": [], "actions": []}
+    for item in options["capabilities"]:
+        by_kind[item["kind"]].append(item["label"])
+
+    assert by_kind["sensors"] == [str(s) for s in Sensor]
+    assert by_kind["actions"] == [str(a) for a in Action]
+
+    categories = {item["category"] for item in options["capabilities"] if item["kind"] == "sensors"}
+    assert len(categories) > 1, "the test is meaningless if sensors sit in one panel"
 
 
 def test_the_page_is_served(client: TestClient) -> None:
@@ -285,10 +326,12 @@ def test_the_new_mechanics_reach_the_settings() -> None:
             sense_cost=0.5,
             zone_shrink=0.02,
             offspring_per_survivor=3.5,
+            offspring_at_capacity=0.5,
             carrying_capacity=99,
             mating_radius=42,
         )
     )
+    assert config.offspring_at_capacity == 0.5
     assert config.reproduction == "sexual"
     assert config.energy_enabled is False
     assert config.initial_energy == 55.0
@@ -315,6 +358,9 @@ def test_a_generation_message_carries_the_population_picture(client: TestClient)
 
         assert message["previous_population"] == 30
         assert message["capacity"] == 400
+        # The bar this generation had to clear, for the chart's dashed line.
+        assert len(message["thresholds"]) == 1
+        assert 0.0 < message["thresholds"][0] <= 1.0
         assert message["zone_fraction"] == pytest.approx(0.12)
         assert len(message["populations"]) == 1
 
