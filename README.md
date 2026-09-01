@@ -96,24 +96,30 @@ bar, and drifts as survival does. The dashed line on the survival chart is the
 bar itself: where the survival line crosses it is exactly where the population
 turns around.
 
-Measured over 20–30 generations, in a carrying capacity of 400:
+Measured across every objective — three seeds each, 30 generations, capacity
+400, sampled from generation 10 once the population has settled:
 
-| objective | typical survival | population range |
-| --- | --- | --- |
-| `stay-centre` | ~35% | 158 – 311 |
-| `centre` | ~47% | 166 – 367 |
-| `top-to-bottom` | ~55% | 217 – 391 |
-| `corners` | ~75% | 290 – 400 |
-| `left` | ~92% | 393 – 400 — effectively pinned |
+| objective | population range | swing | generations at the cap |
+| --- | --- | --- | --- |
+| `there-and-back` | 213 – 400 | 154 | 7% |
+| `top-to-bottom` | 217 – 400 | 135 | 2% |
+| `hazard` | 267 – 400 | 123 | 38% |
+| `corners` | 285 – 400 | 111 | 40% |
+| `stay-centre` | 179 – 311 | 106 | 0% |
+| `centre` | 182 – 329 | 102 | 0% |
+| `stay` | 392 – 400 | 4 | 92% |
+| `left` | 393 – 400 | 4 | 95% |
+| `right` | 382 – 400 | 6 | 92% |
 
-Every one of them dips hard in the first generation or two — down to 62 on
-`top-to-bottom` — and climbs back out. None went extinct across nine runs.
+Nothing went extinct in any of the 27 runs, and every objective dips hard in
+the first generation or two — as low as 62 — before climbing back out.
 
-**`left` is the honest exception.** Its evolved survival exceeds even the 87%
-demanded at capacity, so nothing stops it filling the world. A static objective
-that a population solves *completely* will always saturate; the fluctuation
-lives in the objectives that stay hard. If you want movement on an easy one,
-raise "offspring when full" toward 1.0 to make even that marginal.
+**Three objectives still pin: `left`, `right` and `stay`.** Their evolved
+survival exceeds even the 87% demanded at capacity, so nothing stops them
+filling the world. That is the honest limit of this mechanism: an objective a
+population solves *completely* will always saturate, and the fluctuation lives
+in the six that stay hard. To get movement on an easy one, raise "offspring
+when full" toward 1.0 until even that survival rate is marginal.
 
 **A shrinking target.** Optionally the survival zone contracts each generation,
 so a solution that worked at generation 10 stops working by 50. Worth knowing:

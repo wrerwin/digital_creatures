@@ -328,15 +328,18 @@ is full**.
 That curve is what makes the number move. A population settles where its
 survival rate meets the rising bar, and since survival wanders from generation
 to generation, so does the population. Measured against a capacity of 400,
-`centre` oscillates between 166 and 367, `top-to-bottom` between 217 and 391 —
-and both crash below 80 in the first generation before climbing out.
+`centre` oscillates between 182 and 329 and `there-and-back` between 213 and
+400, both crashing below 80 in the first generation before climbing out.
 
-It is worth being precise about the limit here. An objective a population
-solves *completely* will still saturate: `left` evolves to about 92% survival,
-which clears even the 87% demanded at capacity, so it pins near the cap. The
-fluctuation is real but it lives in the objectives that stay hard — it is a
-property of the interaction between difficulty and density, not something the
-breeding curve can impose on its own.
+It is worth being precise about the limit. Six of the nine objectives fluctuate
+this way; **three do not**. `left`, `right` and `stay` all evolve to survival
+rates above the 87% demanded at capacity, so nothing stops them filling the
+world and they sit within a few individuals of the cap.
+
+That is not a tuning failure but a structural one: an objective a population
+solves *completely* will always saturate. The fluctuation is a property of the
+interaction between difficulty and density, and no breeding curve can impose it
+on a problem that has been fully solved.
 
 ---
 
