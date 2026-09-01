@@ -158,16 +158,34 @@ def resolve(strategy: Strategy | str | None) -> Strategy:
     return strategy
 
 
+def breeding_rate(population: int, config: Settings) -> float:
+    """
+    Offspring per breeding survivor, higher when there is room to grow.
+
+    Density dependence, which is both how real populations behave and what
+    keeps a bad generation from being automatically fatal: a population at a
+    tenth of capacity breeds close to twice the base rate, one at capacity
+    breeds at exactly the base rate.
+    """
+    if config.carrying_capacity <= 0:
+        return config.offspring_per_survivor
+    room = max(0.0, 1.0 - population / config.carrying_capacity)
+    return config.offspring_per_survivor * (1.0 + config.recovery_boost * room)
+
+
 def next_generation(
-    survivors: list[Organism], strategy: Strategy, config: Settings
+    survivors: list[Organism],
+    strategy: Strategy,
+    config: Settings,
+    population: int | None = None,
 ) -> list[Organism]:
     """
     Build the next generation, or an empty list if the population dies out.
 
-    The size is earned rather than fixed: breeding survivors leave
-    `offspring_per_survivor` young each, capped by the carrying capacity. The
-    fractional part is settled by a coin toss so that a rate of 2.5 really does
-    average two and a half rather than quietly rounding down every time.
+    The size is earned rather than fixed: breeding survivors leave offspring at
+    the current breeding rate, capped by the carrying capacity. The fractional
+    part is settled by a coin toss so that a rate of 2.5 really does average
+    two and a half rather than quietly rounding down every time.
     """
     if not survivors:
         return []
@@ -177,7 +195,8 @@ def next_generation(
         return []
 
     breeding = sum(len(pair) for pair in pairs)
-    exact = breeding * config.offspring_per_survivor
+    crowd = population if population is not None else breeding
+    exact = breeding * breeding_rate(crowd, config)
     total = int(exact)
     if random.random() < exact - total:
         total += 1

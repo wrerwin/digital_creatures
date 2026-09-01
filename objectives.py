@@ -109,6 +109,17 @@ class Objective(ABC):
     dynamic: bool = False
     """True if `zones` changes during a generation and must be redrawn."""
 
+    zone_scale: float = 1.0
+    """
+    How much bigger this objective's target is than the global zone setting.
+
+    The same fraction produces wildly different targets: a circle of radius
+    0.12w covers 4.4% of the grid where a band of width 0.12w covers 12%, so
+    one setting for everything made some objectives unsurvivable while others
+    were comfortable. Each objective scales the setting to whatever gives it
+    the difficulty it is meant to have.
+    """
+
     # These three are deliberately optional: most objectives only need a
     # verdict, so doing nothing is the correct default rather than an oversight.
     def begin_generation(self, world: World) -> None:  # noqa: B027
@@ -137,9 +148,10 @@ class ReachZone(Objective):
     instant matters, so a creature can do anything it likes on the way.
     """
 
-    def __init__(self, name: str, zone: Zone) -> None:
+    def __init__(self, name: str, zone: Zone, zone_scale: float = 1.0) -> None:
         self.name = name
         self.zone = zone
+        self.zone_scale = zone_scale
 
     def survives(self, org: Organism, world: World) -> bool:
         return self.zone(org.x, org.y, world)
@@ -156,10 +168,17 @@ class StayInZone(Objective):
     rewards getting there fast and then holding position against the crowd.
     """
 
-    def __init__(self, name: str, zone: Zone, fraction: float | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        zone: Zone,
+        fraction: float | None = None,
+        zone_scale: float = 1.0,
+    ) -> None:
         self.name = name
         self.zone = zone
         self.fraction = fraction
+        self.zone_scale = zone_scale
 
     def _required(self, world: World) -> float:
         fraction = self.fraction if self.fraction is not None else world.config.stay_fraction
@@ -189,10 +208,11 @@ class VisitInOrder(Objective):
     `age` sense -- or a recurrent inner neuron -- into its movement.
     """
 
-    def __init__(self, name: str, first: Zone, second: Zone) -> None:
+    def __init__(self, name: str, first: Zone, second: Zone, zone_scale: float = 1.0) -> None:
         self.name = name
         self.first = first
         self.second = second
+        self.zone_scale = zone_scale
 
     def begin_generation(self, world: World) -> None:
         for org in world.organisms:
@@ -256,16 +276,33 @@ class Hazard(Objective):
 
 
 def _build() -> dict[str, Objective]:
-    """The objectives offered on the command line and in the notebook."""
+    """
+    The objectives offered on the command line, in the UI and in the notebook.
+
+    Ordered easiest first, and scaled so that difficulty is a ladder rather
+    than a cliff. The scales are not arbitrary: a circle needs roughly 1.6x
+    the fraction of a band to cover the same area, and the objectives that ask
+    for more than "be here at the end" -- holding position, making two trips --
+    need a wider target still to stay winnable from a random start.
+    """
     listed: list[Objective] = [
+        # Reach somewhere by the end. The plain case.
         ReachZone("left", left_edge),
         ReachZone("right", right_edge),
-        ReachZone("centre", centre),
-        ReachZone("corners", corners),
-        StayInZone("stay", left_edge),
-        StayInZone("stay-centre", centre),
-        VisitInOrder("there-and-back", right_edge, left_edge),
-        VisitInOrder("top-to-bottom", top_edge, bottom_edge),
+        # Same idea, smaller or more scattered targets, so scaled up to match.
+        ReachZone("corners", corners, zone_scale=1.5),
+        ReachZone("centre", centre, zone_scale=2.4),
+        # Hold position for part of the generation: arriving late is worthless.
+        StayInZone("stay", left_edge, fraction=0.35, zone_scale=1.4),
+        StayInZone("stay-centre", centre, fraction=0.35, zone_scale=2.6),
+        # Two trips, which no fixed heading can solve. The bands have to be
+        # wide: a scattered population that must cross the world and come back
+        # scored under 4% unevolved, far too low to ever get started.
+        # 4.0 is as wide as these can go: at 4.5 the two bands overlap, and a
+        # creature could satisfy both by standing still in the middle.
+        VisitInOrder("top-to-bottom", top_edge, bottom_edge, zone_scale=4.0),
+        VisitInOrder("there-and-back", right_edge, left_edge, zone_scale=4.0),
+        # Nothing to reach: just do not get caught.
         Hazard(),
     ]
     return {objective.name: objective for objective in listed}

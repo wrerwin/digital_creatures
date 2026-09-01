@@ -167,13 +167,16 @@
           <div class="readout"><span id="alive-value">—</span><label>alive</label></div>
           <div class="readout"><span id="survivors-value">—</span><label>last survivors</label></div>
           <div class="readout"><span id="pop-value">—</span><label>population</label></div>
-          <div class="readout"><span id="lineage-value">—</span><label>lineages left</label></div>
+          <div class="readout">
+            <span id="lineage-value">—</span><label>lineages of founders</label>
+          </div>
         </div>
 
         <canvas id="chart" width="600" height="150"></canvas>
         <p class="legend">
           <span class="key survival"></span> share surviving
           <span class="key population"></span> population vs capacity
+          <span class="key lineage"></span> lineages vs founders
         </p>
 
         <details class="expression" open>
@@ -181,6 +184,17 @@
           <p class="expression-note" id="expression-summary">
             Run a generation to see what the population is keeping.
           </p>
+
+          <!-- Sweeping the pointer across the bars shows that capability's whole
+               history; clicking one pins it so the pointer can go elsewhere. -->
+          <div class="timeline">
+            <div class="timeline-head">
+              <span id="timeline-label">Sweep across a bar to see its history</span>
+              <span id="timeline-hint" class="hint"></span>
+            </div>
+            <canvas id="timeline" width="600" height="120"></canvas>
+          </div>
+
           <div class="expression-grid">
             <div>
               <h3>Senses wired</h3>

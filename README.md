@@ -57,10 +57,14 @@ At the default cost a population sheds roughly two of its nine wired senses
 over thirty generations. Run out of energy and you starve mid-generation.
 
 **A population that can die.** Nothing is refilled to a fixed size. Each
-breeding survivor leaves `offspring_per_survivor` young, capped by the carrying
-capacity. At the default of 2.0 the population holds steady at *exactly* 50%
-survival — so that line, drawn on the survival chart, is the edge. Below it the
-population shrinks, and it can reach zero, which ends the run.
+breeding survivor leaves offspring, capped by the carrying capacity, and the
+population can reach zero — which ends the run.
+
+The rate is **density-dependent**, which is both how real populations behave
+and what keeps one bad generation from being automatically fatal. A full
+population needs 25% survival to hold its ground; a struggling one needs only
+6.25% to start climbing back. That band is the edge, and the dashed line on the
+survival chart marks where you currently sit relative to it.
 
 **A shrinking target.** Optionally the survival zone contracts each generation,
 so a solution that worked at generation 10 stops working by 50. Worth knowing:
@@ -70,6 +74,34 @@ capacity tends to absorb it.
 The defaults are deliberately mean. A measured run fell from 250 creatures to
 18 before recovering; under sexual reproduction, seeds exist that die out
 entirely in three generations.
+
+### Difficulty is a ladder, not a cliff
+
+One `survival_zone_fraction` cannot mean the same thing to every objective. A
+circle of radius `0.12w` covers 4.4% of the grid where a band of width `0.12w`
+covers 12%, so the same setting made some objectives comfortable and others
+impossible. Each objective now scales that setting by its own `zone_scale`.
+
+Area is not the whole story either — reaching a point in the middle is a harder
+thing for a brain to *compute* than heading in one fixed direction, so `centre`
+is given more room than equal area would suggest. What is tuned against is
+measured survival of an **unevolved** population, which is what decides whether
+a run can get started at all:
+
+| objective | unevolved survival |
+| --- | --- |
+| `hazard` | 40% |
+| `stay-centre` | 28% |
+| `corners` | 24% |
+| `stay` | 24% |
+| `left` | 22% |
+| `right` | 17% |
+| `centre` | 15% |
+| `there-and-back` | 11% |
+| `top-to-bottom` | 8% |
+
+All of them clear the 6.25% a struggling population needs, so every objective
+is winnable — while still spanning a five-fold range in how hard it is.
 
 Each organism has a **genome**: a fixed-length tuple of genes, where every gene
 is one connection.
@@ -124,7 +156,7 @@ dial for changing what evolves.
 | objective | rule |
 | --- | --- |
 | `left`, `right`, `centre`, `corners` | be inside the region when the generation ends |
-| `stay`, `stay-centre` | spend at least half the generation inside the region |
+| `stay`, `stay-centre` | spend at least a third of the generation inside the region |
 | `there-and-back` | touch the east band, then finish in the west one |
 | `top-to-bottom` | touch the north band, then finish in the south one |
 | `hazard` | survive a roaming circle that kills whatever it touches |
@@ -161,12 +193,25 @@ view tells you what evolution has decided: for every sense and action, the
 share of the population that wires it at all.
 
 It is the most informative thing in the UI. A sense at 100% has become
-load-bearing; one that falls to 0% has been actively selected away. In one
-measured run against the `left` objective, `x_position` went to 100% while
-`y_position` and `population_density` were driven to zero — and 200 founding
-lineages collapsed to 2.
+load-bearing; one that falls to 0% has been actively selected away.
 
-`--stats` prints the same picture in the terminal.
+**Sweep the pointer across the bars** to see how any one capability got there —
+its whole share-per-generation history, with where it started, where it peaked
+and where it ended. Click a bar to pin it so the pointer can go elsewhere.
+This is where the story is: in one measured run, `x_position` fell from 45% to
+3% while `population_density` climbed from 33% to 67%, which is the population
+switching from navigating by absolute position to navigating by its neighbours.
+
+**Lineages** are counted against the founders, not in isolation — five lineages
+left is unremarkable out of ten and a near-total collapse out of two hundred.
+The readout and the purple line on the chart both show the ratio. Runs
+routinely end with 2–3% of founding lines still present.
+
+`--stats` prints the same picture in the terminal:
+
+```
+population 156   lineages 5 of 150 (3% remaining)   mean senses wired 8.1
+```
 
 ## Obstacles
 
@@ -243,7 +288,7 @@ world = World(config=config, objective="there-and-back")
 
 ```bash
 uv sync                 # create the environment
-uv run pytest           # 125 invariant checks
+uv run pytest           # 153 invariant checks
 uv run ruff check .     # lint
 uv run ruff format .    # format
 ```

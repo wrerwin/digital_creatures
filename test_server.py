@@ -322,7 +322,50 @@ def test_a_generation_message_carries_the_population_picture(client: TestClient)
         assert [item["label"] for item in expression["sensors"]] == [str(s) for s in Sensor]
         assert [item["label"] for item in expression["actions"]] == [str(a) for a in Action]
         assert expression["lineages"]["alive"] >= 1
+        assert expression["lineages"]["founding"] == 30
         assert expression["mean_senses_used"] > 0
+        assert message["lineage_shares"] == [pytest.approx(expression["lineages"]["remaining"])]
+
+
+def test_lineage_share_is_tracked_across_generations(client: TestClient) -> None:
+    """The lineage line on the chart needs one point per generation, in range."""
+    with client.websocket_connect("/ws") as socket:
+        socket.send_json(full_payload(steps=3, generations=4, population=30, stride=50))
+        socket.receive_json()
+
+        shares = []
+        while (message := socket.receive_json())["type"] != "done":
+            if message["type"] == "generation":
+                shares = message["lineage_shares"]
+
+        assert len(shares) >= 1
+        assert all(0.0 <= share <= 1.0 for share in shares)
+
+
+def test_the_client_can_build_a_sense_history_from_generations(client: TestClient) -> None:
+    """
+    Every generation must carry a full share-per-capability snapshot.
+
+    The browser accumulates the timeline from these rather than the server
+    resending a growing history, so a missing capability would leave a gap that
+    silently misaligns the chart.
+    """
+    labels_per_generation = []
+    with client.websocket_connect("/ws") as socket:
+        socket.send_json(full_payload(steps=2, generations=3, population=20, stride=50))
+        socket.receive_json()
+
+        while (message := socket.receive_json())["type"] != "done":
+            if message["type"] == "generation":
+                expression = message["expression"]
+                labels_per_generation.append(
+                    [item["label"] for item in expression["sensors"] + expression["actions"]]
+                )
+
+    assert len(labels_per_generation) >= 1
+    assert all(labels == labels_per_generation[0] for labels in labels_per_generation), (
+        "the capability list changed between generations"
+    )
 
 
 def test_an_extinct_run_says_so_and_stops(client: TestClient) -> None:
