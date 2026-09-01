@@ -34,16 +34,24 @@ let hoveredLabel = null;
 let pinnedLabel = null;
 
 /*
- * Recall: every frame of the generation currently running is kept, and handed
- * over to `lastGeneration` when that generation ends. So when a run finishes —
- * or is stopped — the last complete generation can be replayed and scrubbed.
+ * Recall: frames are archived generation by generation as a run goes, and the
+ * whole archive becomes browsable once it ends.
  *
- * Capped, because a long generation at stride 1 would otherwise grow without
- * limit; the newest frames are the ones worth keeping.
+ * A hundred generations at 200 frames each would be some 270MB of pheromone
+ * data, so the archive lives on a frame budget. When it overflows, whole
+ * generations are dropped — but the one dropped is always the most *redundant*,
+ * meaning the one whose neighbours are closest. The first and last are never
+ * dropped. So a long run degrades into an evenly spread sample of itself rather
+ * than keeping only the tail, which preserves what is actually interesting:
+ * being able to compare the beginning against the end.
  */
-const MAX_RECALL_FRAMES = 900;
+const FRAME_BUDGET = 5000;
+const MAX_FRAMES_PER_GENERATION = 900;
+
 let recording = [];
-let lastGeneration = [];
+let archive = new Map(); // generation number -> frames for that generation
+let archivedFrames = 0;
+let selectedFrames = [];
 let playbackTimer = null;
 let playhead = 0;
 
@@ -99,6 +107,7 @@ async function init() {
   el("stop").addEventListener("click", stop);
 
   el("replay-play").addEventListener("click", togglePlayback);
+  el("replay-generation").addEventListener("change", loadRecalledGeneration);
   el("replay-scrub").addEventListener("input", (event) => {
     stopPlayback(); // dragging takes over from playback
     showRecalledFrame(Number(event.target.value));
@@ -338,7 +347,9 @@ function start() {
   // A new run invalidates whatever was recalled from the previous one.
   stopPlayback();
   recording = [];
-  lastGeneration = [];
+  archive = new Map();
+  archivedFrames = 0;
+  selectedFrames = [];
   el("replay").hidden = true;
 
   el("brain").textContent = "Running…";
@@ -391,7 +402,7 @@ function handle(message) {
       break;
     case "frame":
       recording.push(message);
-      if (recording.length > MAX_RECALL_FRAMES) recording.shift();
+      if (recording.length > MAX_FRAMES_PER_GENERATION) recording.shift();
       drawFrame(message);
       break;
     case "generation":
@@ -414,18 +425,15 @@ function handle(message) {
       break;
     case "done":
       setRunning(false);
+      revealRecall();
       setStatus(
-        message.extinct
-          ? "Extinct — nobody left to breed."
-          : "Finished.",
+        message.extinct ? "Extinct — nobody left to breed." : "Finished.",
         Boolean(message.extinct),
       );
       break;
     case "stopped":
       setRunning(false);
-      // A run stopped mid-generation still has frames worth keeping, even
-      // though no generation ever completed.
-      keepForRecall();
+      revealRecall();
       setStatus("Stopped.");
       break;
     case "error":
@@ -487,37 +495,92 @@ function paintMask(image, mask, colour, alphaFromValue) {
 
 /* ------------------------------------------------------------ recall */
 
+/* Archive the generation that just finished. Silent: the controls only appear
+   once the whole run is over, so they do not churn while it is going. */
 function keepForRecall() {
   if (!recording.length) return;
-  lastGeneration = recording;
+
+  // Frames carry the generation they belong to; the generation message counts
+  // completed generations, so it is one ahead. Trust the frames.
+  const number = recording[0].generation;
+  archive.set(number, recording);
+  archivedFrames += recording.length;
   recording = [];
-  showReplayControls();
+  pruneArchive();
 }
 
-function showReplayControls() {
+function pruneArchive() {
+  while (archivedFrames > FRAME_BUDGET && archive.size > 2) {
+    const generations = [...archive.keys()].sort((a, b) => a - b);
+
+    // Drop whichever interior generation sits in the most crowded stretch, so
+    // what remains stays spread across the whole run.
+    let victim = generations[1];
+    let closest = Infinity;
+    for (let i = 1; i < generations.length - 1; i += 1) {
+      const gap = generations[i + 1] - generations[i - 1];
+      if (gap < closest) {
+        closest = gap;
+        victim = generations[i];
+      }
+    }
+
+    archivedFrames -= archive.get(victim).length;
+    archive.delete(victim);
+  }
+}
+
+/* Reveal the archive once the run has stopped, not during it. */
+function revealRecall() {
+  keepForRecall(); // a generation cut short mid-run is still worth keeping
+
   const bar = el("replay");
-  bar.hidden = lastGeneration.length === 0;
+  bar.hidden = archive.size === 0;
   if (bar.hidden) return;
 
+  const generations = [...archive.keys()].sort((a, b) => a - b);
+  const picker = el("replay-generation");
+  picker.innerHTML = "";
+  for (const number of generations) {
+    const option = document.createElement("option");
+    option.value = String(number);
+    option.textContent = `Generation ${number + 1}`;
+    picker.append(option);
+  }
+
+  const span = generations[generations.length - 1] - generations[0] + 1;
+  el("replay-note").textContent =
+    archive.size < span
+      ? `${archive.size} of ${span} kept — sampled to fit memory`
+      : `${archive.size} generation${archive.size === 1 ? "" : "s"}`;
+
+  // Open on the last generation: the one the run ended on.
+  picker.value = String(generations[generations.length - 1]);
+  loadRecalledGeneration();
+}
+
+function loadRecalledGeneration() {
+  stopPlayback();
+  selectedFrames = archive.get(Number(el("replay-generation").value)) || [];
   const scrub = el("replay-scrub");
-  scrub.max = String(lastGeneration.length - 1);
-  // Park the playhead on the final frame: the state selection acted on.
-  playhead = lastGeneration.length - 1;
-  scrub.value = String(playhead);
-  describePlayhead();
+  scrub.max = String(Math.max(0, selectedFrames.length - 1));
+
+  // Park on the final frame: the state selection actually acted on.
+  showRecalledFrame(selectedFrames.length - 1);
 }
 
 function describePlayhead() {
-  const frame = lastGeneration[playhead];
+  const frame = selectedFrames[playhead];
   if (!frame) return;
   el("replay-label").textContent =
-    `gen ${frame.generation} · step ${frame.step} · ${frame.alive} alive`;
+    `gen ${frame.generation + 1} · step ${frame.step} · ${frame.alive} alive`;
 }
 
 function showRecalledFrame(index) {
-  playhead = Math.max(0, Math.min(lastGeneration.length - 1, index));
+  if (!selectedFrames.length) return;
+  playhead = Math.max(0, Math.min(selectedFrames.length - 1, index));
   el("replay-scrub").value = String(playhead);
-  drawFrame(lastGeneration[playhead]);
+  drawFrame(selectedFrames[playhead]);
   describePlayhead();
 }
 
@@ -526,14 +589,14 @@ function togglePlayback() {
     stopPlayback();
     return;
   }
-  if (!lastGeneration.length) return;
+  if (!selectedFrames.length) return;
 
   // Starting from the end would replay nothing, so rewind first.
-  if (playhead >= lastGeneration.length - 1) playhead = 0;
+  if (playhead >= selectedFrames.length - 1) playhead = 0;
 
   el("replay-play").textContent = "❚❚";
   playbackTimer = window.setInterval(() => {
-    if (playhead >= lastGeneration.length - 1) {
+    if (playhead >= selectedFrames.length - 1) {
       stopPlayback();
       return;
     }

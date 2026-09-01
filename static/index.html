@@ -142,12 +142,21 @@
       <section class="stage">
         <canvas id="world" width="600" height="600"></canvas>
 
-        <!-- Recall: every frame of the most recently completed generation is
-             kept, so it can be replayed and scrubbed once the run ends. -->
+        <!-- Recall: frames are archived generation by generation while a run
+             goes, and the whole archive becomes browsable once it ends. -->
         <div class="replay" id="replay" hidden>
-          <button type="button" id="replay-play" class="replay-button">▶</button>
-          <input id="replay-scrub" type="range" min="0" max="0" value="0" />
-          <span class="replay-label" id="replay-label">—</span>
+          <div class="replay-row">
+            <label class="replay-pick">
+              Recall
+              <select id="replay-generation"></select>
+            </label>
+            <span class="replay-note" id="replay-note"></span>
+          </div>
+          <div class="replay-row">
+            <button type="button" id="replay-play" class="replay-button">▶</button>
+            <input id="replay-scrub" type="range" min="0" max="0" value="0" />
+            <span class="replay-label" id="replay-label">—</span>
+          </div>
         </div>
 
         <div class="readouts">

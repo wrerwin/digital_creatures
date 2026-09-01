@@ -52,11 +52,22 @@ produce trail-following.
 Changing the controls and pressing Run abandons whatever is in flight and
 starts over, so it stays responsive while a long run is going.
 
-**Recall.** Every frame of the generation currently running is kept, so when a
-run finishes — or you stop it — the last complete generation can be replayed
-and scrubbed frame by frame under the world view. It parks on the final frame,
-which is the state selection actually acted on, so you can wind back and watch
-how the survivors got there.
+**Recall.** Frames are archived generation by generation as a run goes, and the
+whole archive becomes browsable once it ends — pick any generation from the
+dropdown, then play or scrub through it frame by frame. Stopping a run early
+works too, and keeps the part-finished generation.
+
+Each generation opens on its final frame, which is the state selection actually
+acted on, so you can wind back and watch how those survivors got there. Being
+able to put generation 1 next to generation 40 is the point: it is the
+difference between seeing what evolved and seeing it evolve.
+
+The archive lives on a frame budget of about 5,000. Long runs overflow it, and
+when they do whole generations are dropped — but always the most *redundant*
+one, meaning whichever sits in the most crowded stretch, and never the first or
+last. A 120-generation run reduces to an evenly spread sample of 50 rather than
+just the tail, so the beginning is still there to compare against the end. The
+control says so when it has sampled.
 
 Every menu is built from `/api/options`, which reads the enums and registries
 directly — a new sense, action, objective or barrier layout appears in the

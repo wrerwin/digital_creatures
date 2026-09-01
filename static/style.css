@@ -414,12 +414,42 @@ h2 .link-button:hover {
 
 .replay {
   display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.4rem 0.5rem;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.45rem 0.5rem;
   background: #14161f;
   border: 1px solid var(--panel-edge);
   border-radius: 8px;
+}
+
+.replay-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.replay-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  flex: 1;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.replay-pick select {
+  flex: 1;
+  margin-top: 0;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.82rem;
+}
+
+.replay-note {
+  flex: none;
+  font-size: 0.7rem;
+  color: #6f7488;
 }
 
 .replay-button {
