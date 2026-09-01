@@ -142,6 +142,10 @@ border_distance --(-2.13)--> move_x
 inner_2 --(+1.44)--> move_forward
 ```
 
+**[BRAIN.md](BRAIN.md) explains the whole mechanism** — how the network is put
+together, how a genome becomes behaviour in one timestep, how the senses feed
+into it, and what evolution is actually doing across generations.
+
 ## What a creature can sense
 
 All readings are held in `[-1, 1]` so no single sense dominates a brain.
@@ -288,6 +292,7 @@ world = World(config=config, objective="there-and-back")
 
 | file | what's in it |
 | --- | --- |
+| `BRAIN.md` | how the neural network, the senses and the evolution actually work |
 | `settings.py` | `Settings`, a frozen dataclass holding every tunable number |
 | `capability_utils.py` | the `Sensor` and `Action` enums — what a creature can perceive and do |
 | `brain_utils.py` | genes, mutation, and the network a genome builds |
