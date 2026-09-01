@@ -21,8 +21,26 @@ random noise; watch the survival percentage climb.
 
 The browser configures a run; the server streams it back a frame at a time.
 Alongside the world settings — objective, obstacles, population, generations,
-seed — two dropdowns of checkboxes control **what the creatures are allowed to
-be**: which senses and which actions evolution may wire up.
+seed — a **skill dashboard** controls what the creatures are allowed to be.
+
+Skills are split into three collapsible panels, because they answer three
+different questions:
+
+| panel | question | holds |
+| --- | --- | --- |
+| **Sensing** | what can it perceive of the world? | position, walls, neighbours, obstacles, scent |
+| **Moving** | what can it do in the world? | the seven actions, including laying scent |
+| **Intelligence** | what does it know about itself? | previous movement, age, energy, noise, a constant — plus genome size and inner-neuron count |
+
+Every skill carries a tooltip, and for senses that text is the sensing
+function's **own docstring**, so what a user reads cannot drift away from what
+the code does. Each panel shows how many of its skills are enabled, and turns
+red when a panel is emptied.
+
+Underneath, a running estimate of what the selection costs to run: a brain
+wiring all 19 senses burns 0.86 energy per step, about 172 over a 200-step
+generation — against a budget of 140, so it starves. Turning senses off is not
+only a restriction, it is a discount.
 
 Switching a capability off removes it from the search space entirely. No new
 gene will target it, so whatever behaviour depended on it has to be found some
@@ -36,7 +54,8 @@ starts over, so it stays responsive while a long run is going.
 
 Every menu is built from `/api/options`, which reads the enums and registries
 directly — a new sense, action, objective or barrier layout appears in the
-browser with no front-end change.
+browser, in the right panel and correctly explained, with no front-end change.
+A sense's panel comes from `SENSOR_CATEGORY` in `capability_utils.py`.
 
 ## How it works
 
@@ -288,7 +307,7 @@ world = World(config=config, objective="there-and-back")
 
 ```bash
 uv sync                 # create the environment
-uv run pytest           # 153 invariant checks
+uv run pytest           # 156 invariant checks
 uv run ruff check .     # lint
 uv run ruff format .    # format
 ```

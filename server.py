@@ -30,9 +30,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import barriers
+import capability_utils
 import population_stats
 import reproduction
-from capability_utils import Action, Sensor
+from capability_utils import Action, Category, Sensor
 from objectives import OBJECTIVES
 from organism import World
 from settings import Settings
@@ -78,11 +79,27 @@ async def options() -> dict[str, Any]:
         "objectives": list(OBJECTIVES),
         "barriers": sorted(barriers.LAYOUTS),
         "reproduction": list(reproduction.STRATEGIES),
-        "sensors": [
-            {"value": int(sensor), "label": str(sensor), "group": _sensor_group(sensor)}
-            for sensor in Sensor
+        "capabilities": capability_utils.catalogue(),
+        "categories": [
+            {
+                "id": str(Category.SENSING),
+                "name": "Sensing",
+                "icon": "◎",
+                "blurb": "What it can perceive of the world around it.",
+            },
+            {
+                "id": str(Category.MOVING),
+                "name": "Moving",
+                "icon": "➤",
+                "blurb": "What it can do in the world.",
+            },
+            {
+                "id": str(Category.INTELLIGENCE),
+                "name": "Intelligence",
+                "icon": "✦",
+                "blurb": "What it knows about itself, and how much brain it has to think with.",
+            },
         ],
-        "actions": [{"value": int(action), "label": str(action)} for action in Action],
         "defaults": {
             "objective": "left",
             "barriers": defaults.barrier_layout,
@@ -96,6 +113,7 @@ async def options() -> dict[str, Any]:
             "energy_enabled": defaults.energy_enabled,
             "initial_energy": defaults.initial_energy,
             "sense_cost": defaults.sense_cost,
+            "metabolism_base": defaults.metabolism,
             "survival_zone_fraction": defaults.survival_zone_fraction,
             "zone_shrink": defaults.zone_shrink_per_generation,
             "offspring_per_survivor": defaults.offspring_per_survivor,
@@ -103,18 +121,6 @@ async def options() -> dict[str, Any]:
             "mating_radius": defaults.mating_radius,
         },
     }
-
-
-def _sensor_group(sensor: Sensor) -> str:
-    """Which heading a sense sits under in the capabilities menu."""
-    name = sensor.name
-    if name.startswith("PHEROMONE"):
-        return "what can I smell"
-    if name.startswith(("NEIGHBOUR", "BLOCKED", "POPULATION")):
-        return "what is around me"
-    if name.startswith(("X_", "Y_", "BORDER")):
-        return "where am I"
-    return "what was I doing"
 
 
 # ----------------------------------------------------------------------------

@@ -89,7 +89,7 @@
           </label>
         </div>
 
-        <h2>The creatures</h2>
+        <h2>Breeding</h2>
 
         <label>
           Reproduction
@@ -101,51 +101,22 @@
           <input id="mating_radius" type="number" min="1" max="200" step="1" />
         </label>
 
-        <div class="row">
-          <label>
-            Genes
-            <input id="n_genes" type="number" min="1" max="200" step="1" />
-          </label>
-          <label>
-            Inner neurons
-            <input id="n_inner_neurons" type="number" min="1" max="32" step="1" />
-          </label>
-        </div>
-
         <label>
           Mutation rate <span class="hint" id="mutation_label"></span>
           <input id="mutation_rate" type="range" min="0" max="0.2" step="0.005" />
         </label>
 
-        <!-- The capabilities menus: a dropdown holding checkboxes, so a run can
-             be given a deliberately restricted creature. -->
-        <div class="dropdown" id="sensors-dropdown">
-          <button type="button" class="dropdown-toggle" aria-expanded="false">
-            <span>Senses</span>
-            <span class="badge" id="sensors-count"></span>
-          </button>
-          <div class="dropdown-menu" hidden>
-            <div class="dropdown-actions">
-              <button type="button" data-select="all" data-target="sensors">all</button>
-              <button type="button" data-select="none" data-target="sensors">none</button>
-            </div>
-            <div id="sensors-list"></div>
-          </div>
-        </div>
+        <!-- The skill dashboard. Every capability a creature may evolve, grouped
+             by what it is for. Switching one off removes it from the search
+             space: no gene will ever target it. Built from /api/options. -->
+        <h2>
+          Creature skills
+          <button type="button" id="skills-toggle-all" class="link-button">collapse all</button>
+        </h2>
 
-        <div class="dropdown" id="actions-dropdown">
-          <button type="button" class="dropdown-toggle" aria-expanded="false">
-            <span>Actions</span>
-            <span class="badge" id="actions-count"></span>
-          </button>
-          <div class="dropdown-menu" hidden>
-            <div class="dropdown-actions">
-              <button type="button" data-select="all" data-target="actions">all</button>
-              <button type="button" data-select="none" data-target="actions">none</button>
-            </div>
-            <div id="actions-list"></div>
-          </div>
-        </div>
+        <div class="skills" id="skills"></div>
+
+        <p class="upkeep" id="upkeep-note"></p>
 
         <label>
           Speed <span class="hint" id="stride_label"></span>

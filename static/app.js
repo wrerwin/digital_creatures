@@ -50,19 +50,22 @@ async function init() {
   fillSelect(el("barriers"), options.barriers, options.defaults.barriers);
   fillSelect(el("reproduction"), options.reproduction, options.defaults.reproduction);
 
+  // The skill panels create the brain-size inputs, so they must exist before
+  // the defaults below are written into them.
+  buildSkillDashboard(options);
+
   const numbers = [
     "population", "steps", "generations", "n_genes", "n_inner_neurons",
     "mutation_rate", "initial_energy", "sense_cost", "survival_zone_fraction",
     "zone_shrink", "offspring_per_survivor", "carrying_capacity", "mating_radius",
   ];
   for (const name of numbers) {
-    const key = { zone_shrink: "zone_shrink" }[name] || name;
-    if (options.defaults[key] !== undefined) el(name).value = options.defaults[key];
+    if (options.defaults[name] !== undefined) el(name).value = options.defaults[name];
   }
   el("energy_enabled").checked = options.defaults.energy_enabled;
-
-  buildCapabilityList("sensors", options.sensors, true);
-  buildCapabilityList("actions", options.actions, false);
+  el("sense_cost").addEventListener("input", showUpkeep);
+  el("energy_enabled").addEventListener("change", showUpkeep);
+  showUpkeep();
 
   el("mutation_rate").addEventListener("input", showMutationRate);
   el("stride").addEventListener("input", showStride);
@@ -75,10 +78,11 @@ async function init() {
   showShrink();
   showMatingField();
 
+  el("steps").addEventListener("input", showUpkeep);
+  el("initial_energy").addEventListener("input", showUpkeep);
   el("start").addEventListener("click", start);
   el("stop").addEventListener("click", stop);
 
-  wireDropdowns();
   connect();
 }
 
@@ -95,41 +99,97 @@ function fillSelect(select, values, chosen) {
 
 /* ----------------------------------------------------- capability menus */
 
-function buildCapabilityList(kind, items, grouped) {
-  const host = el(`${kind}-list`);
+/*
+ * One collapsible panel per category, built from /api/options.
+ *
+ * A capability's category and its tooltip both come from the server, which
+ * reads them off the enums and the sensing functions' own docstrings — so a
+ * new sense appears here, in the right group, correctly explained, with no
+ * change to this file.
+ */
+function buildSkillDashboard(options) {
+  const host = el("skills");
   host.innerHTML = "";
 
-  // Senses are grouped by what they tell a creature; actions are a flat list.
-  const groups = new Map();
-  for (const item of items) {
-    const name = grouped ? item.group : "";
-    if (!groups.has(name)) groups.set(name, []);
-    groups.get(name).push(item);
+  for (const category of options.categories) {
+    const members = options.capabilities.filter((item) => item.category === category.id);
+
+    const group = document.createElement("section");
+    group.className = "skill-group";
+    group.dataset.category = category.id;
+    group.innerHTML = `
+      <button type="button" class="skill-header" aria-expanded="true">
+        <span class="skill-icon">${category.icon}</span>
+        <span class="skill-name">${category.name}</span>
+        <span class="badge" data-count="${category.id}"></span>
+        <span class="chevron" aria-hidden="true"></span>
+      </button>
+      <div class="skill-body">
+        <p class="skill-blurb">${category.blurb}</p>
+        <div class="skill-buttons">
+          <button type="button" data-select="all">enable all</button>
+          <button type="button" data-select="none">disable all</button>
+        </div>
+        <div class="skill-list"></div>
+      </div>`;
+
+    const list = group.querySelector(".skill-list");
+    for (const item of members) list.append(skillRow(item, category.id));
+
+    group.querySelector(".skill-header").addEventListener("click", () => {
+      group.classList.toggle("collapsed");
+      group
+        .querySelector(".skill-header")
+        .setAttribute("aria-expanded", String(!group.classList.contains("collapsed")));
+    });
+
+    for (const button of group.querySelectorAll("[data-select]")) {
+      button.addEventListener("click", () => {
+        const wanted = button.dataset.select === "all";
+        for (const box of group.querySelectorAll("input[type=checkbox]")) box.checked = wanted;
+        updateCounts();
+      });
+    }
+
+    // Brain size belongs with intelligence: it is how much there is to think
+    // with, as opposed to what there is to think about.
+    if (category.id === "intelligence") {
+      const extras = document.createElement("div");
+      extras.className = "brain-size";
+      extras.innerHTML = `
+        <label>Genes<input id="n_genes" type="number" min="1" max="200" step="1" /></label>
+        <label>Inner neurons
+          <input id="n_inner_neurons" type="number" min="1" max="32" step="1" /></label>`;
+      group.querySelector(".skill-body").append(extras);
+    }
+
+    host.append(group);
   }
 
-  for (const [name, members] of groups) {
-    if (name) {
-      const heading = document.createElement("p");
-      heading.className = "group-name";
-      heading.textContent = name;
-      host.append(heading);
-    }
-    for (const item of members) {
-      const label = document.createElement("label");
-      label.className = "check";
+  el("skills-toggle-all").addEventListener("click", toggleAllGroups);
+  updateCounts();
+}
 
-      const box = document.createElement("input");
-      box.type = "checkbox";
-      box.value = item.value;
-      box.checked = true;
-      box.dataset.kind = kind;
-      box.addEventListener("change", () => updateBadge(kind));
+function skillRow(item, categoryId) {
+  const label = document.createElement("label");
+  label.className = "check";
+  label.dataset.tip = item.description;
+  label.title = item.description; // native fallback, and for accessibility
 
-      label.append(box, document.createTextNode(item.label));
-      host.append(label);
-    }
-  }
-  updateBadge(kind);
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.value = item.value;
+  box.checked = true;
+  box.dataset.kind = item.kind;
+  box.dataset.category = categoryId;
+  box.addEventListener("change", updateCounts);
+
+  const name = document.createElement("span");
+  name.className = "check-label";
+  name.textContent = item.label;
+
+  label.append(box, name);
+  return label;
 }
 
 function boxesFor(kind) {
@@ -142,50 +202,59 @@ function selectedValues(kind) {
     .map((box) => Number(box.value));
 }
 
-function updateBadge(kind) {
-  const boxes = boxesFor(kind);
-  const chosen = boxes.filter((box) => box.checked).length;
-  el(`${kind}-count`).textContent = `${chosen}/${boxes.length}`;
+function updateCounts() {
+  for (const badge of document.querySelectorAll("[data-count]")) {
+    const id = badge.dataset.count;
+    const boxes = [...document.querySelectorAll(`input[data-category="${id}"]`)];
+    const chosen = boxes.filter((box) => box.checked).length;
+    badge.textContent = `${chosen}/${boxes.length}`;
+    // A category with nothing enabled is worth flagging: no sensing at all, or
+    // no way to move, means the run cannot start.
+    badge.classList.toggle("empty", chosen === 0);
+  }
+  showUpkeep();
 }
 
-function wireDropdowns() {
-  for (const dropdown of document.querySelectorAll(".dropdown")) {
-    const toggle = dropdown.querySelector(".dropdown-toggle");
-    const menu = dropdown.querySelector(".dropdown-menu");
-
-    toggle.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const opening = menu.hidden;
-      closeAllDropdowns();
-      menu.hidden = !opening;
-      toggle.setAttribute("aria-expanded", String(opening));
-    });
-
-    // Clicks inside the menu must not close it, or ticking several boxes
-    // would mean reopening the menu every time.
-    menu.addEventListener("click", (event) => event.stopPropagation());
+function toggleAllGroups() {
+  const groups = [...document.querySelectorAll(".skill-group")];
+  const collapsing = groups.some((group) => !group.classList.contains("collapsed"));
+  for (const group of groups) {
+    group.classList.toggle("collapsed", collapsing);
+    group.querySelector(".skill-header").setAttribute("aria-expanded", String(!collapsing));
   }
-
-  for (const button of document.querySelectorAll("[data-select]")) {
-    button.addEventListener("click", () => {
-      const kind = button.dataset.target;
-      const checked = button.dataset.select === "all";
-      for (const box of boxesFor(kind)) box.checked = checked;
-      updateBadge(kind);
-    });
-  }
-
-  document.addEventListener("click", closeAllDropdowns);
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeAllDropdowns();
-  });
+  el("skills-toggle-all").textContent = collapsing ? "expand all" : "collapse all";
 }
 
-function closeAllDropdowns() {
-  for (const menu of document.querySelectorAll(".dropdown-menu")) menu.hidden = true;
-  for (const toggle of document.querySelectorAll(".dropdown-toggle")) {
-    toggle.setAttribute("aria-expanded", "false");
+/*
+ * What the current selection would cost to run.
+ *
+ * Upkeep is charged per distinct sense a brain actually wires, so this is the
+ * ceiling rather than a prediction — but it is the number that decides whether
+ * a generous loadout is affordable, and it moves as boxes are ticked.
+ */
+function showUpkeep() {
+  const note = el("upkeep-note");
+  if (!options) return;
+
+  const senses = selectedValues("sensors").length;
+  if (!el("energy_enabled").checked) {
+    note.classList.remove("costly");
+    note.textContent = "Metabolism is off — skills cost nothing to run.";
+    return;
   }
+
+  const perStep =
+    options.defaults.metabolism_base + senses * Number(el("sense_cost").value || 0);
+  const budget = Number(el("initial_energy").value || 0);
+  const steps = Number(el("steps").value || 1);
+  const affordable = perStep * steps <= budget;
+
+  note.classList.toggle("costly", !affordable);
+  note.innerHTML =
+    `A brain wiring all ${senses} senses burns <strong>${perStep.toFixed(2)}</strong>/step, ` +
+    `about <strong>${Math.round(perStep * steps)}</strong> over a generation ` +
+    `of ${steps} steps — against a budget of ${budget}. ` +
+    (affordable ? "Affordable." : "That starves before the end.");
 }
 
 function showMutationRate() {

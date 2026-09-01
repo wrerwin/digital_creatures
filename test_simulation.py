@@ -21,6 +21,7 @@ import pytest
 
 import barriers
 import brain_utils
+import capability_utils
 import inspect_utils
 import objectives
 from brain_utils import Brain, Gene, Sink, Source
@@ -172,6 +173,20 @@ def test_perceive_reports_every_sensor(config: Settings) -> None:
     """The debugging view must cover the full sensor list."""
     world = World(config=config)
     assert set(world.organisms[0].perceive(world)) == set(Sensor)
+
+
+def test_every_capability_is_described_for_the_interface() -> None:
+    """
+    Tooltips come from the sensing functions' own docstrings.
+
+    That keeps the explanation a user reads from drifting away from what the
+    code actually does, but it means a sensor written without a docstring would
+    silently show an empty tooltip.
+    """
+    for capability in [*Sensor, *Action]:
+        text = capability_utils.describe(capability)
+        assert text, f"{capability} has nothing to show in a tooltip"
+        assert len(text) < 200, f"{capability}: tooltip too long to read"
 
 
 def test_neighbour_gradient_points_at_the_neighbours(config: Settings) -> None:

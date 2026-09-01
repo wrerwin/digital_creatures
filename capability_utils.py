@@ -20,14 +20,30 @@ The senses fall into four groups:
 
 from __future__ import annotations
 
+import inspect
 import random
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from organism import Organism, World
+
+
+class Category(StrEnum):
+    """
+    How a capability is presented to somebody configuring a run.
+
+    Three groups, because they answer three different questions: what can it
+    perceive of the world, what can it do in the world, and what does it know
+    about itself. The last is where memory and self-knowledge live, and is the
+    one most easily overlooked when picking a creature apart.
+    """
+
+    SENSING = "sensing"
+    MOVING = "moving"
+    INTELLIGENCE = "intelligence"
 
 
 class Sensor(IntEnum):
@@ -258,3 +274,94 @@ assert SENSOR_FUNCTIONS.keys() == set(Sensor), "every Sensor needs an implementa
 def read_sensors(org: Organism, world: World) -> dict[Sensor, float]:
     """Evaluate every sensor for one organism. For inspection, not for the hot loop."""
     return {sensor: fn(org, world) for sensor, fn in SENSOR_FUNCTIONS.items()}
+
+
+# ----------------------------------------------------------------------------
+# Presentation: how capabilities are grouped and explained
+# ----------------------------------------------------------------------------
+#
+# Sensing is what a creature perceives of the world; intelligence is what it
+# knows about itself, which is where memory and timing come from.
+
+SENSOR_CATEGORY: Final[dict[Sensor, Category]] = {
+    Sensor.X_POSITION: Category.SENSING,
+    Sensor.Y_POSITION: Category.SENSING,
+    Sensor.BORDER_DISTANCE: Category.SENSING,
+    Sensor.POPULATION_DENSITY: Category.SENSING,
+    Sensor.NEIGHBOURS_EAST: Category.SENSING,
+    Sensor.NEIGHBOURS_NORTH: Category.SENSING,
+    Sensor.NEAREST_NEIGHBOUR: Category.SENSING,
+    Sensor.BLOCKED_FORWARD: Category.SENSING,
+    Sensor.BLOCKED_LEFT: Category.SENSING,
+    Sensor.BLOCKED_RIGHT: Category.SENSING,
+    Sensor.PHEROMONE_HERE: Category.SENSING,
+    Sensor.PHEROMONE_EAST: Category.SENSING,
+    Sensor.PHEROMONE_NORTH: Category.SENSING,
+    Sensor.LAST_MOVE_X: Category.INTELLIGENCE,
+    Sensor.LAST_MOVE_Y: Category.INTELLIGENCE,
+    Sensor.AGE: Category.INTELLIGENCE,
+    Sensor.ENERGY: Category.INTELLIGENCE,
+    Sensor.RANDOM: Category.INTELLIGENCE,
+    Sensor.BIAS: Category.INTELLIGENCE,
+}
+
+assert SENSOR_CATEGORY.keys() == set(Sensor), "every Sensor needs a category"
+
+ACTION_DESCRIPTIONS: Final[dict[Action, str]] = {
+    Action.MOVE_X: "Drive east or west. Positive goes east, negative west.",
+    Action.MOVE_Y: "Drive north or south. Positive goes north, negative south.",
+    Action.MOVE_FORWARD: "Keep going whichever way it last moved.",
+    Action.MOVE_LEFT: "Turn a quarter-turn left of its heading and go.",
+    Action.MOVE_RANDOM: "Step in an arbitrary direction.",
+    Action.STAY: "Damp whatever the other actions wanted, and hold still.",
+    Action.EMIT_PHEROMONE: (
+        "Lay scent on the current cell. The only way one creature can change "
+        "what another perceives."
+    ),
+}
+
+assert ACTION_DESCRIPTIONS.keys() == set(Action), "every Action needs a description"
+
+
+def describe(capability: Sensor | Action) -> str:
+    """
+    A one-line explanation, for a tooltip.
+
+    Sensor text comes from the sensing function's own docstring, so the
+    explanation shown to a user cannot drift away from what the code does.
+    """
+    if isinstance(capability, Action):
+        return ACTION_DESCRIPTIONS[capability]
+
+    doc = inspect.getdoc(SENSOR_FUNCTIONS[capability]) or ""
+    return " ".join(doc.split("\n\n")[0].split())
+
+
+def catalogue() -> list[dict[str, object]]:
+    """
+    Every capability with the category and explanation the UI needs.
+
+    Built from the enums themselves, so a new sense or action appears in the
+    interface, in the right group, with no front-end change.
+    """
+    entries: list[dict[str, object]] = [
+        {
+            "value": int(sensor),
+            "label": str(sensor),
+            "kind": "sensors",
+            "category": str(SENSOR_CATEGORY[sensor]),
+            "description": describe(sensor),
+        }
+        for sensor in Sensor
+    ]
+    entries += [
+        {
+            "value": int(action),
+            "label": str(action),
+            "kind": "actions",
+            "category": str(Category.MOVING),
+            "description": describe(action),
+        }
+        for action in Action
+    ]
+    return entries
