@@ -315,10 +315,28 @@ creature to a sense its entire ancestry ignored.
 
 ### Population dynamics
 
-The population is earned, not refilled. Breeding survivors leave offspring at
-a **density-dependent** rate: a full population must survive at 25% just to
-hold its ground, while one that has crashed needs only 6.25% to start climbing
-back. Below that band it slides toward zero, and zero is final.
+The population is earned, not refilled. Breeding survivors leave offspring at a
+**density-dependent** rate that decays geometrically as the world fills:
+
+$$\text{rate}(N) = r_{\text{empty}} \left(\frac{r_{\text{full}}}{r_{\text{empty}}}\right)^{N/K}$$
+
+With the defaults — 14 offspring per survivor in an empty world, 1.15 at the
+carrying capacity $K$ — the survival rate needed merely to hold steady, which is
+$1/\text{rate}$, climbs from **7% when the population has crashed to 87% when it
+is full**.
+
+That curve is what makes the number move. A population settles where its
+survival rate meets the rising bar, and since survival wanders from generation
+to generation, so does the population. Measured against a capacity of 400,
+`centre` oscillates between 166 and 367, `top-to-bottom` between 217 and 391 —
+and both crash below 80 in the first generation before climbing out.
+
+It is worth being precise about the limit here. An objective a population
+solves *completely* will still saturate: `left` evolves to about 92% survival,
+which clears even the 87% demanded at capacity, so it pins near the cap. The
+fluctuation is real but it lives in the objectives that stay hard — it is a
+property of the interaction between difficulty and density, not something the
+breeding curve can impose on its own.
 
 ---
 

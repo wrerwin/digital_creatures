@@ -33,6 +33,20 @@ let senseHistory = new Map(); // label -> array of shares, one per generation
 let hoveredLabel = null;
 let pinnedLabel = null;
 
+/*
+ * Recall: every frame of the generation currently running is kept, and handed
+ * over to `lastGeneration` when that generation ends. So when a run finishes —
+ * or is stopped — the last complete generation can be replayed and scrubbed.
+ *
+ * Capped, because a long generation at stride 1 would otherwise grow without
+ * limit; the newest frames are the ones worth keeping.
+ */
+const MAX_RECALL_FRAMES = 900;
+let recording = [];
+let lastGeneration = [];
+let playbackTimer = null;
+let playhead = 0;
+
 // Colours for the zone shadings the objective reports, keyed by the matplotlib
 // colormap name the Python side uses.
 const ZONE_COLOURS = {
@@ -57,7 +71,8 @@ async function init() {
   const numbers = [
     "population", "steps", "generations", "n_genes", "n_inner_neurons",
     "mutation_rate", "initial_energy", "sense_cost", "survival_zone_fraction",
-    "zone_shrink", "offspring_per_survivor", "carrying_capacity", "mating_radius",
+    "zone_shrink", "offspring_per_survivor", "offspring_at_capacity",
+    "carrying_capacity", "mating_radius",
   ];
   for (const name of numbers) {
     if (options.defaults[name] !== undefined) el(name).value = options.defaults[name];
@@ -82,6 +97,12 @@ async function init() {
   el("initial_energy").addEventListener("input", showUpkeep);
   el("start").addEventListener("click", start);
   el("stop").addEventListener("click", stop);
+
+  el("replay-play").addEventListener("click", togglePlayback);
+  el("replay-scrub").addEventListener("input", (event) => {
+    stopPlayback(); // dragging takes over from playback
+    showRecalledFrame(Number(event.target.value));
+  });
 
   connect();
 }
@@ -313,6 +334,13 @@ function start() {
   hoveredLabel = null;
   pinnedLabel = null;
   drawTimeline();
+
+  // A new run invalidates whatever was recalled from the previous one.
+  stopPlayback();
+  recording = [];
+  lastGeneration = [];
+  el("replay").hidden = true;
+
   el("brain").textContent = "Running…";
   setStatus("Starting…");
   setRunning(true);
@@ -335,6 +363,7 @@ function start() {
       survival_zone_fraction: Number(el("survival_zone_fraction").value),
       zone_shrink: Number(el("zone_shrink").value),
       offspring_per_survivor: Number(el("offspring_per_survivor").value),
+      offspring_at_capacity: Number(el("offspring_at_capacity").value),
       carrying_capacity: Number(el("carrying_capacity").value),
       mating_radius: Number(el("mating_radius").value),
       stride: Number(el("stride").value),
@@ -361,9 +390,12 @@ function handle(message) {
       );
       break;
     case "frame":
+      recording.push(message);
+      if (recording.length > MAX_RECALL_FRAMES) recording.shift();
       drawFrame(message);
       break;
     case "generation":
+      keepForRecall();
       el("gen-value").textContent = message.generation;
       el("survivors-value").textContent =
         `${message.survivors} / ${message.previous_population}`;
@@ -375,6 +407,7 @@ function handle(message) {
         message.populations,
         message.capacity,
         message.lineage_shares,
+        message.thresholds,
       );
       drawExpression(message.expression, message.zone_fraction);
       drawTimeline();
@@ -390,6 +423,9 @@ function handle(message) {
       break;
     case "stopped":
       setRunning(false);
+      // A run stopped mid-generation still has frames worth keeping, even
+      // though no generation ever completed.
+      keepForRecall();
       setStatus("Stopped.");
       break;
     case "error":
@@ -449,6 +485,68 @@ function paintMask(image, mask, colour, alphaFromValue) {
   }
 }
 
+/* ------------------------------------------------------------ recall */
+
+function keepForRecall() {
+  if (!recording.length) return;
+  lastGeneration = recording;
+  recording = [];
+  showReplayControls();
+}
+
+function showReplayControls() {
+  const bar = el("replay");
+  bar.hidden = lastGeneration.length === 0;
+  if (bar.hidden) return;
+
+  const scrub = el("replay-scrub");
+  scrub.max = String(lastGeneration.length - 1);
+  // Park the playhead on the final frame: the state selection acted on.
+  playhead = lastGeneration.length - 1;
+  scrub.value = String(playhead);
+  describePlayhead();
+}
+
+function describePlayhead() {
+  const frame = lastGeneration[playhead];
+  if (!frame) return;
+  el("replay-label").textContent =
+    `gen ${frame.generation} · step ${frame.step} · ${frame.alive} alive`;
+}
+
+function showRecalledFrame(index) {
+  playhead = Math.max(0, Math.min(lastGeneration.length - 1, index));
+  el("replay-scrub").value = String(playhead);
+  drawFrame(lastGeneration[playhead]);
+  describePlayhead();
+}
+
+function togglePlayback() {
+  if (playbackTimer !== null) {
+    stopPlayback();
+    return;
+  }
+  if (!lastGeneration.length) return;
+
+  // Starting from the end would replay nothing, so rewind first.
+  if (playhead >= lastGeneration.length - 1) playhead = 0;
+
+  el("replay-play").textContent = "❚❚";
+  playbackTimer = window.setInterval(() => {
+    if (playhead >= lastGeneration.length - 1) {
+      stopPlayback();
+      return;
+    }
+    showRecalledFrame(playhead + 1);
+  }, 40);
+}
+
+function stopPlayback() {
+  if (playbackTimer !== null) window.clearInterval(playbackTimer);
+  playbackTimer = null;
+  el("replay-play").textContent = "▶";
+}
+
 function drawFrame(message) {
   if (!layers) return;
   const { width, height } = layers;
@@ -494,7 +592,7 @@ function resetChart() {
   chartCtx.clearRect(0, 0, chart.width, chart.height);
 }
 
-function drawChart(history, populations, capacity, lineageShares) {
+function drawChart(history, populations, capacity, lineageShares, thresholds) {
   const { width, height } = chart;
   const pad = 26;
   chartCtx.clearRect(0, 0, width, height);
@@ -515,18 +613,6 @@ function drawChart(history, populations, capacity, lineageShares) {
     chartCtx.fillText(`${Math.round(fraction * 100)}%`, 2, y + 3);
   }
 
-  // The replacement line: survive at less than this and the population shrinks.
-  const replacement = 1 / Number(el("offspring_per_survivor").value || 2);
-  if (replacement > 0 && replacement <= 1) {
-    chartCtx.strokeStyle = "#7a5c2e";
-    chartCtx.setLineDash([4, 4]);
-    chartCtx.beginPath();
-    chartCtx.moveTo(pad, toY(replacement));
-    chartCtx.lineTo(width - 6, toY(replacement));
-    chartCtx.stroke();
-    chartCtx.setLineDash([]);
-  }
-
   if (!history.length) return;
   const span = Math.max(history.length - 1, 1);
 
@@ -542,6 +628,14 @@ function drawChart(history, populations, capacity, lineageShares) {
     });
     chartCtx.stroke();
   };
+
+  // The bar each generation had to clear. It rises as the world fills, so
+  // where the survival line crosses it is exactly where the population turns.
+  if (thresholds && thresholds.length) {
+    chartCtx.setLineDash([4, 4]);
+    line(thresholds, "#c08a4a", 1);
+    chartCtx.setLineDash([]);
+  }
 
   if (populations && capacity) line(populations, "#4ec9a0", 1 / capacity);
   if (lineageShares) line(lineageShares, "#c98ae0", 1);

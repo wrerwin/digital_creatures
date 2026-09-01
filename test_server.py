@@ -49,7 +49,8 @@ def full_payload(**overrides: Any) -> dict[str, Any]:
         "sense_cost": 0.04,
         "survival_zone_fraction": 0.12,
         "zone_shrink": 0.0,
-        "offspring_per_survivor": 2.0,
+        "offspring_per_survivor": 14.0,
+        "offspring_at_capacity": 1.15,
         "carrying_capacity": 400,
         "mating_radius": 18,
         "stride": 1,
@@ -325,10 +326,12 @@ def test_the_new_mechanics_reach_the_settings() -> None:
             sense_cost=0.5,
             zone_shrink=0.02,
             offspring_per_survivor=3.5,
+            offspring_at_capacity=0.5,
             carrying_capacity=99,
             mating_radius=42,
         )
     )
+    assert config.offspring_at_capacity == 0.5
     assert config.reproduction == "sexual"
     assert config.energy_enabled is False
     assert config.initial_energy == 55.0
@@ -355,6 +358,9 @@ def test_a_generation_message_carries_the_population_picture(client: TestClient)
 
         assert message["previous_population"] == 30
         assert message["capacity"] == 400
+        # The bar this generation had to clear, for the chart's dashed line.
+        assert len(message["thresholds"]) == 1
+        assert 0.0 < message["thresholds"][0] <= 1.0
         assert message["zone_fraction"] == pytest.approx(0.12)
         assert len(message["populations"]) == 1
 

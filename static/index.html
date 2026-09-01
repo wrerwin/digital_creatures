@@ -62,16 +62,24 @@
           <input id="zone_shrink" type="range" min="0" max="0.05" step="0.002" />
         </label>
 
+        <!-- The two ends of the density-dependent breeding curve. The gap
+             between them is what makes the population move: cheap to recover
+             from a crash, expensive to keep a full world full. -->
         <div class="row">
-          <label>
-            Offspring / survivor
-            <input id="offspring_per_survivor" type="number" min="0.1" max="20" step="0.1" />
+          <label title="Offspring per survivor in an empty world — the recovery rate">
+            Offspring when empty
+            <input id="offspring_per_survivor" type="number" min="0.1" max="100" step="0.5" />
           </label>
-          <label>
-            Carrying capacity
-            <input id="carrying_capacity" type="number" min="2" max="5000" step="50" />
+          <label title="Offspring per survivor at carrying capacity — near 1.0 keeps the population on a knife's edge">
+            Offspring when full
+            <input id="offspring_at_capacity" type="number" min="0.05" max="100" step="0.05" />
           </label>
         </div>
+
+        <label>
+          Carrying capacity
+          <input id="carrying_capacity" type="number" min="2" max="5000" step="50" />
+        </label>
 
         <label class="check standalone">
           <input id="energy_enabled" type="checkbox" checked />
@@ -133,6 +141,15 @@
 
       <section class="stage">
         <canvas id="world" width="600" height="600"></canvas>
+
+        <!-- Recall: every frame of the most recently completed generation is
+             kept, so it can be replayed and scrubbed once the run ends. -->
+        <div class="replay" id="replay" hidden>
+          <button type="button" id="replay-play" class="replay-button">▶</button>
+          <input id="replay-scrub" type="range" min="0" max="0" value="0" />
+          <span class="replay-label" id="replay-label">—</span>
+        </div>
+
         <div class="readouts">
           <div class="readout"><span id="gen-value">—</span><label>generation</label></div>
           <div class="readout"><span id="alive-value">—</span><label>alive</label></div>
@@ -148,6 +165,7 @@
           <span class="key survival"></span> share surviving
           <span class="key population"></span> population vs capacity
           <span class="key lineage"></span> lineages vs founders
+          <span class="key threshold"></span> survival needed to hold
         </p>
 
         <details class="expression" open>

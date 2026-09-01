@@ -117,6 +117,7 @@ async def options() -> dict[str, Any]:
             "survival_zone_fraction": defaults.survival_zone_fraction,
             "zone_shrink": defaults.zone_shrink_per_generation,
             "offspring_per_survivor": defaults.offspring_per_survivor,
+            "offspring_at_capacity": defaults.offspring_at_capacity,
             "carrying_capacity": defaults.carrying_capacity,
             "mating_radius": defaults.mating_radius,
         },
@@ -182,7 +183,10 @@ def build_settings(payload: dict[str, Any]) -> Settings:
         ),
         zone_shrink_per_generation=_clamp_float(payload.get("zone_shrink"), 0.0, 0.5, 0.0),
         offspring_per_survivor=_clamp_float(
-            payload.get("offspring_per_survivor"), 0.1, 20.0, defaults.offspring_per_survivor
+            payload.get("offspring_per_survivor"), 0.1, 100.0, defaults.offspring_per_survivor
+        ),
+        offspring_at_capacity=_clamp_float(
+            payload.get("offspring_at_capacity"), 0.05, 100.0, defaults.offspring_at_capacity
         ),
         # Capped below the grid size, or a generation could have nowhere to stand.
         carrying_capacity=_clamp_int(
@@ -284,6 +288,7 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
     history: list[float] = []
     populations: list[int] = []
     lineage_shares: list[float] = []
+    thresholds: list[float] = []
 
     for _ in range(config.n_generations):
         before = world.population
@@ -308,6 +313,8 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
         history.append(survivors / max(before, 1))
         populations.append(world.population)
         lineage_shares.append(expression["lineages"]["remaining"])
+        # The bar this generation had to clear, which rises as the world fills.
+        thresholds.append(reproduction.replacement_threshold(before, config))
         await websocket.send_json(
             {
                 "type": "generation",
@@ -320,6 +327,7 @@ async def stream_run(websocket: WebSocket, payload: dict[str, Any]) -> None:
                 "history": history,
                 "populations": populations,
                 "lineage_shares": lineage_shares,
+                "thresholds": thresholds,
                 "expression": expression,
                 "brain": world.organisms[0].brain.describe() if world.organisms else "",
             }

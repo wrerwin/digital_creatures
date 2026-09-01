@@ -106,37 +106,31 @@ class Settings:
     weight_jitter: float = 0.4
     """Standard deviation of the nudge applied to a mutated weight."""
 
-    offspring_per_survivor: float = 4.0
+    offspring_per_survivor: float = 14.0
     """
-    How many offspring each breeding survivor leaves at carrying capacity.
+    Offspring per breeding survivor in an *empty* world -- the recovery rate.
 
-    This sets the knife's edge, as 1 / rate: at 4.0 a full population holds
-    steady at 25% survival, and a sparse one at 12.5% because of
-    `recovery_boost`. That band is the point -- above it the population climbs
-    toward capacity, below it it slides toward nothing.
+    High on purpose: a population that has crashed needs only 1/14 = 7% of it
+    to survive to start climbing back, which is what keeps one bad generation
+    from being automatically fatal on the harder objectives.
+    """
 
-    It was 2.0, demanding 50% survival from generation zero. Measured, an
-    unevolved population manages 22% on the easiest objective and under 4% on
-    the hardest, so nothing but the trivial cases could clear the bar before
-    the population collapsed.
+    offspring_at_capacity: float = 1.15
+    """
+    Offspring per breeding survivor at the carrying capacity.
+
+    This is the knife's edge, as 1 / rate: a full world demands 87% survival
+    simply to stay full. Between the two numbers the rate decays
+    geometrically, so a population settles wherever its survival rate meets
+    the rising bar -- and drifts up and down as survival does.
+
+    Set near 1.0 deliberately. It used to be 4.0, which meant an evolved
+    population always overshot the cap and was clamped flat to it: measured
+    over 30 generations the population sat at exactly 400 every single time.
     """
 
     carrying_capacity: int = 400
     """Hard ceiling on population, however well the survivors do."""
-
-    recovery_boost: float = 3.0
-    """
-    How much harder survivors breed when the population is far below capacity.
-
-    At 3.0 a nearly empty world breeds at four times the base rate, tapering to
-    the base rate at capacity. This is what widens the survivable band: the
-    knife's edge stays at 25% survival for a full population, but a struggling
-    one only needs 6.25% to start climbing back.
-
-    Without it a single bad generation was usually fatal -- the population
-    dropped, dropped again, and never got the room to recover -- which is what
-    turned every objective except the easiest into "extinct".
-    """
 
     mating_radius: int = 18
     """

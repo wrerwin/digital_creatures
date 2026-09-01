@@ -160,17 +160,37 @@ def resolve(strategy: Strategy | str | None) -> Strategy:
 
 def breeding_rate(population: int, config: Settings) -> float:
     """
-    Offspring per breeding survivor, higher when there is room to grow.
+    Offspring per breeding survivor, falling off as the world fills up.
 
-    Density dependence, which is both how real populations behave and what
-    keeps a bad generation from being automatically fatal: a population at a
-    tenth of capacity breeds close to twice the base rate, one at capacity
-    breeds at exactly the base rate.
+    The rate decays geometrically from `offspring_per_survivor` in an empty
+    world to `offspring_at_capacity` at the carrying capacity, so the bar for
+    holding your ground rises as the population grows: cheap to recover from a
+    crash, expensive to keep a full world full.
+
+    That curve is what makes the population *move*. A linear falloff with a
+    high rate at capacity meant an evolved population always overshot the cap
+    and was clamped flat to it, so the number never budged. Here a population
+    settles where its survival rate meets the rising bar, which for most
+    objectives is somewhere below the cap -- and it drifts as survival does.
     """
     if config.carrying_capacity <= 0:
         return config.offspring_per_survivor
-    room = max(0.0, 1.0 - population / config.carrying_capacity)
-    return config.offspring_per_survivor * (1.0 + config.recovery_boost * room)
+
+    crowding = min(1.0, max(0.0, population / config.carrying_capacity))
+    empty = config.offspring_per_survivor
+    full = config.offspring_at_capacity
+    return empty * (full / empty) ** crowding
+
+
+def replacement_threshold(population: int, config: Settings) -> float:
+    """
+    The survival rate this population needs simply to hold its size.
+
+    Survive above it and the population grows, below it and it shrinks. This is
+    the line the survival chart draws, and it climbs as the world fills.
+    """
+    rate = breeding_rate(population, config)
+    return 1.0 / rate if rate > 0 else 1.0
 
 
 def next_generation(

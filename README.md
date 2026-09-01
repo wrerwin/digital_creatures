@@ -52,6 +52,12 @@ produce trail-following.
 Changing the controls and pressing Run abandons whatever is in flight and
 starts over, so it stays responsive while a long run is going.
 
+**Recall.** Every frame of the generation currently running is kept, so when a
+run finishes — or you stop it — the last complete generation can be replayed
+and scrubbed frame by frame under the world view. It parks on the final frame,
+which is the state selection actually acted on, so you can wind back and watch
+how the survivors got there.
+
 Every menu is built from `/api/options`, which reads the enums and registries
 directly — a new sense, action, objective or barrier layout appears in the
 browser, in the right panel and correctly explained, with no front-end change.
@@ -79,11 +85,35 @@ over thirty generations. Run out of energy and you starve mid-generation.
 breeding survivor leaves offspring, capped by the carrying capacity, and the
 population can reach zero — which ends the run.
 
-The rate is **density-dependent**, which is both how real populations behave
-and what keeps one bad generation from being automatically fatal. A full
-population needs 25% survival to hold its ground; a struggling one needs only
-6.25% to start climbing back. That band is the edge, and the dashed line on the
-survival chart marks where you currently sit relative to it.
+The rate is **density-dependent**, decaying geometrically from 14 offspring per
+survivor in an empty world to 1.15 at the carrying capacity. So the bar for
+holding your ground climbs as the world fills — from 7% survival when the
+population has crashed to 87% when it is full. Cheap to recover, expensive to
+stay full.
+
+A population therefore settles wherever its survival rate meets that rising
+bar, and drifts as survival does. The dashed line on the survival chart is the
+bar itself: where the survival line crosses it is exactly where the population
+turns around.
+
+Measured over 20–30 generations, in a carrying capacity of 400:
+
+| objective | typical survival | population range |
+| --- | --- | --- |
+| `stay-centre` | ~35% | 158 – 311 |
+| `centre` | ~47% | 166 – 367 |
+| `top-to-bottom` | ~55% | 217 – 391 |
+| `corners` | ~75% | 290 – 400 |
+| `left` | ~92% | 393 – 400 — effectively pinned |
+
+Every one of them dips hard in the first generation or two — down to 62 on
+`top-to-bottom` — and climbs back out. None went extinct across nine runs.
+
+**`left` is the honest exception.** Its evolved survival exceeds even the 87%
+demanded at capacity, so nothing stops it filling the world. A static objective
+that a population solves *completely* will always saturate; the fluctuation
+lives in the objectives that stay hard. If you want movement on an easy one,
+raise "offspring when full" toward 1.0 to make even that marginal.
 
 **A shrinking target.** Optionally the survival zone contracts each generation,
 so a solution that worked at generation 10 stops working by 50. Worth knowing:

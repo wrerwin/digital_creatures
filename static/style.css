@@ -410,6 +410,49 @@ h2 .link-button:hover {
   border-radius: 8px;
 }
 
+/* Replaying the last generation ------------------------------------------- */
+
+.replay {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem;
+  background: #14161f;
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+}
+
+.replay-button {
+  flex: none;
+  width: 2rem;
+  height: 1.7rem;
+  background: #21242f;
+  color: var(--ink);
+  border: 1px solid var(--panel-edge);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.replay-button:hover {
+  border-color: var(--accent);
+}
+
+.replay input[type="range"] {
+  flex: 1;
+  margin: 0;
+}
+
+.replay-label {
+  flex: none;
+  min-width: 9.5rem;
+  text-align: right;
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 .readouts {
   display: flex;
   gap: 1.5rem;
@@ -470,6 +513,10 @@ h2 .link-button:hover {
 
 .key.lineage {
   background: #c98ae0;
+}
+
+.key.threshold {
+  background: repeating-linear-gradient(90deg, #c08a4a 0 4px, transparent 4px 7px);
 }
 
 /* Sense history ------------------------------------------------------------ */
